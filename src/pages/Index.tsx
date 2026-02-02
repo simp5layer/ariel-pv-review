@@ -1,13 +1,41 @@
-// Update this page (the content is just a fallback if you fail to update the page)
+import React from 'react';
+import { ProjectProvider, useProject } from '@/contexts/ProjectContext';
+import MainLayout from '@/components/layout/MainLayout';
+import ProjectSetup from '@/components/workflow/ProjectSetup';
+import AnalyzeExtract from '@/components/workflow/AnalyzeExtract';
+import StandardsUpload from '@/components/workflow/StandardsUpload';
+import DesignReview from '@/components/workflow/DesignReview';
 
-const Index = () => {
+const WorkflowContent: React.FC = () => {
+  const { currentStep, currentProject } = useProject();
+
+  // If no project, always show setup
+  if (!currentProject) {
+    return <ProjectSetup />;
+  }
+
+  // Render step based on current step
+  switch (currentStep) {
+    case 0:
+      return <ProjectSetup />;
+    case 1:
+      return <AnalyzeExtract />;
+    case 2:
+      return <StandardsUpload />;
+    case 3:
+      return <DesignReview />;
+    default:
+      return <ProjectSetup />;
+  }
+};
+
+const Index: React.FC = () => {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
-      <div className="text-center">
-        <h1 className="mb-4 text-4xl font-bold">Welcome to Your Blank App</h1>
-        <p className="text-xl text-muted-foreground">Start building your amazing project here!</p>
-      </div>
-    </div>
+    <ProjectProvider>
+      <MainLayout>
+        <WorkflowContent />
+      </MainLayout>
+    </ProjectProvider>
   );
 };
 
