@@ -4,7 +4,7 @@ import desertTechLogo from '@/assets/desert-technologies-logo.png';
 const Header: React.FC = () => {
   return <header className="h-16 border-b border-border bg-card px-6 flex items-center justify-between">
       <div className="flex items-center gap-8">
-        <img src={arialLogo} alt="ARIAL - Assessment of Renewable Infrastructure Analysis and Linkage" className="h-10 object-contain" />
+        <img src={arialLogo} alt="ARIAL - Assessment of Renewable Infrastructure Analysis and Linkage" className="h-10 object-contain rounded-lg" />
       </div>
       
       <div className="flex items-center gap-4">

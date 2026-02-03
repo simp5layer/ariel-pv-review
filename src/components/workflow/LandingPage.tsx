@@ -17,9 +17,7 @@ const LandingPage: React.FC<LandingPageProps> = ({
       <div className="max-w-3xl mx-auto px-6 space-y-8">
         {/* Welcome Section */}
         <div className="text-center space-y-4">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-primary/10 mb-2">
-            
-          </div>
+          
           <h1 className="text-4xl font-bold text-foreground">Welcome to ARIAL</h1>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto">
             AI-powered PV design review and compliance verification platform for Saudi Arabia projects
