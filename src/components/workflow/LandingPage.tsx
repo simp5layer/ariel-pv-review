@@ -13,7 +13,7 @@ const LandingPage: React.FC<LandingPageProps> = ({
   onViewHistory,
   hasProjects
 }) => {
-  return <div className="min-h-full bg-background engineering-grid flex items-center justify-center py-12">
+  return <div className="min-h-full engineering-grid py-12 text-primary bg-primary flex items-center justify-center rounded">
       <div className="max-w-3xl mx-auto px-6 space-y-8">
         {/* Welcome Section */}
         <div className="text-center space-y-4">
