@@ -7,31 +7,31 @@
 @layer base {
   :root {
     /* Background tones - light mode */
-    --background: 210 20% 98%;
-    --foreground: 210 40% 11%;
+    --background: 180 25% 97%;
+    --foreground: 220 30% 15%;
 
     /* Card and surfaces */
     --card: 0 0% 100%;
-    --card-foreground: 210 40% 11%;
+    --card-foreground: 220 30% 15%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 210 40% 11%;
+    --popover-foreground: 220 30% 15%;
 
-    /* Primary - Deep teal from Desert Technologies */
-    --primary: 168 42% 32%;
+    /* Primary - Teal from gradient */
+    --primary: 175 55% 45%;
     --primary-foreground: 0 0% 100%;
 
-    /* Secondary - Steel blue from ARIAL */
-    --secondary: 208 45% 35%;
+    /* Secondary - Purple from gradient */
+    --secondary: 265 45% 55%;
     --secondary-foreground: 0 0% 100%;
 
     /* Muted surfaces */
-    --muted: 210 20% 96%;
-    --muted-foreground: 210 15% 45%;
+    --muted: 180 15% 94%;
+    --muted-foreground: 220 15% 45%;
 
     /* Accent - lighter teal */
-    --accent: 168 35% 94%;
-    --accent-foreground: 168 42% 25%;
+    --accent: 175 40% 92%;
+    --accent-foreground: 175 55% 30%;
 
     /* Severity colors */
     --destructive: 0 72% 51%;
@@ -60,51 +60,55 @@
     --pass-foreground: 0 0% 100%;
 
     /* Borders and inputs */
-    --border: 214 20% 88%;
-    --input: 214 20% 88%;
-    --ring: 168 42% 32%;
+    --border: 180 20% 88%;
+    --input: 180 20% 88%;
+    --ring: 175 55% 45%;
 
     --radius: 0.5rem;
 
     /* Chart colors */
-    --chart-1: 168 42% 32%;
-    --chart-2: 208 45% 35%;
+    --chart-1: 175 55% 45%;
+    --chart-2: 265 45% 55%;
     --chart-3: 142 71% 45%;
     --chart-4: 38 92% 50%;
     --chart-5: 0 72% 51%;
 
     /* Sidebar */
-    --sidebar-background: 210 25% 97%;
-    --sidebar-foreground: 210 40% 11%;
-    --sidebar-primary: 168 42% 32%;
+    --sidebar-background: 180 20% 96%;
+    --sidebar-foreground: 220 30% 15%;
+    --sidebar-primary: 175 55% 45%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 168 35% 94%;
-    --sidebar-accent-foreground: 168 42% 25%;
-    --sidebar-border: 214 20% 90%;
-    --sidebar-ring: 168 42% 32%;
+    --sidebar-accent: 175 40% 92%;
+    --sidebar-accent-foreground: 175 55% 30%;
+    --sidebar-border: 180 20% 88%;
+    --sidebar-ring: 175 55% 45%;
+
+    /* Gradient */
+    --gradient-start: 265 45% 55%;
+    --gradient-end: 175 55% 45%;
   }
 
   .dark {
-    --background: 210 40% 8%;
-    --foreground: 210 20% 95%;
+    --background: 220 30% 8%;
+    --foreground: 180 20% 95%;
 
-    --card: 210 35% 12%;
-    --card-foreground: 210 20% 95%;
+    --card: 220 25% 12%;
+    --card-foreground: 180 20% 95%;
 
-    --popover: 210 35% 12%;
-    --popover-foreground: 210 20% 95%;
+    --popover: 220 25% 12%;
+    --popover-foreground: 180 20% 95%;
 
-    --primary: 168 50% 45%;
+    --primary: 175 55% 50%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 208 55% 45%;
+    --secondary: 265 50% 60%;
     --secondary-foreground: 0 0% 100%;
 
-    --muted: 210 30% 18%;
-    --muted-foreground: 210 15% 60%;
+    --muted: 220 25% 18%;
+    --muted-foreground: 180 15% 60%;
 
-    --accent: 168 40% 18%;
-    --accent-foreground: 168 50% 75%;
+    --accent: 175 45% 18%;
+    --accent-foreground: 175 55% 75%;
 
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
@@ -115,9 +119,9 @@
     --success: 142 71% 45%;
     --success-foreground: 0 0% 100%;
 
-    --border: 210 30% 20%;
-    --input: 210 30% 20%;
-    --ring: 168 50% 45%;
+    --border: 220 25% 20%;
+    --input: 220 25% 20%;
+    --ring: 175 55% 50%;
 
     --critical: 0 84% 60%;
     --critical-foreground: 0 0% 100%;
@@ -131,14 +135,17 @@
     --pass: 142 71% 45%;
     --pass-foreground: 0 0% 100%;
 
-    --sidebar-background: 210 40% 6%;
-    --sidebar-foreground: 210 20% 95%;
-    --sidebar-primary: 168 50% 45%;
+    --sidebar-background: 220 30% 6%;
+    --sidebar-foreground: 180 20% 95%;
+    --sidebar-primary: 175 55% 50%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 168 40% 15%;
-    --sidebar-accent-foreground: 168 50% 75%;
-    --sidebar-border: 210 30% 18%;
-    --sidebar-ring: 168 50% 45%;
+    --sidebar-accent: 175 45% 15%;
+    --sidebar-accent-foreground: 175 55% 75%;
+    --sidebar-border: 220 25% 18%;
+    --sidebar-ring: 175 55% 50%;
+
+    --gradient-start: 265 50% 60%;
+    --gradient-end: 175 55% 50%;
   }
 }
 
