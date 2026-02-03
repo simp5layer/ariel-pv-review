@@ -21,15 +21,9 @@ const AnalyzeExtract: React.FC = () => {
     currentProject, 
     setCurrentStep, 
     extractedData, 
-    setExtractedData,
     isAnalyzing,
-    setIsAnalyzing
+    startAnalysis
   } = useProject();
-
-  const handleStartAnalysis = () => {
-    setIsAnalyzing(true);
-    setExtractedData(null); // This triggers the mock analysis in context
-  };
 
   const analysisProgress = isAnalyzing ? 65 : (extractedData ? 100 : 0);
 
@@ -222,7 +216,7 @@ const AnalyzeExtract: React.FC = () => {
 
           {!extractedData ? (
             <Button
-              onClick={handleStartAnalysis}
+              onClick={startAnalysis}
               disabled={isAnalyzing}
               className="gap-2"
             >

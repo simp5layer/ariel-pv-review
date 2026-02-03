@@ -18,6 +18,7 @@ interface ProjectContextType {
   setIsReviewing: (reviewing: boolean) => void;
   addProjectFile: (file: UploadedFile) => void;
   addStandardFile: (file: UploadedFile) => void;
+  startAnalysis: () => void;
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
@@ -156,17 +157,15 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     setSubmissions([...submissions, submission]);
   };
 
-  // Simulate data extraction after analysis
-  const handleSetExtractedData = (data: ExtractedData | null) => {
-    if (data === null && isAnalyzing) {
-      // Simulate analysis completion
-      setTimeout(() => {
-        setExtractedData(mockExtractedData);
-        setIsAnalyzing(false);
-      }, 3000);
-    } else {
-      setExtractedData(data);
-    }
+  // Start analysis simulation
+  const startAnalysis = () => {
+    setIsAnalyzing(true);
+    setExtractedData(null);
+    // Simulate analysis completion after 2 seconds
+    setTimeout(() => {
+      setExtractedData(mockExtractedData);
+      setIsAnalyzing(false);
+    }, 2000);
   };
 
   // Simulate review completion
@@ -203,7 +202,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         currentStep,
         setCurrentStep,
         extractedData,
-        setExtractedData: handleSetExtractedData,
+        setExtractedData,
         findings,
         setFindings,
         submissions,
@@ -213,7 +212,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         isReviewing,
         setIsReviewing: handleSetIsReviewing,
         addProjectFile,
-        addStandardFile
+        addStandardFile,
+        startAnalysis
       }}
     >
       {children}
