@@ -8,12 +8,14 @@ interface MainLayoutProps {
 }
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
-  const { currentProject } = useProject();
+  const { currentProject, viewMode } = useProject();
+
+  const showStepper = viewMode === 'workflow' && currentProject;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <Header />
-      {currentProject && <WorkflowStepper />}
+      {showStepper && <WorkflowStepper />}
       <main className="flex-1 overflow-auto">
         {children}
       </main>
