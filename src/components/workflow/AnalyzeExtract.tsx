@@ -55,15 +55,6 @@ const AnalyzeExtract: React.FC = () => {
       setAnalysisSteps(prev => ({ ...prev, fileConversion: true }));
       setAnalysisProgress(25);
 
-      // Prepare files for GPT-5.2 analysis
-      const files = currentProject.files.map(file => ({
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        // Note: In production, we'd fetch actual file content from storage
-        content: `File: ${file.name}\nType: ${file.type}\nSize: ${file.size} bytes`
-      }));
-
       // Step 2: Layer parsing
       setAnalysisSteps(prev => ({ ...prev, layerParsing: true }));
       setAnalysisProgress(40);
@@ -79,8 +70,7 @@ const AnalyzeExtract: React.FC = () => {
 
       const { data, error: fnError } = await supabase.functions.invoke('extract-data', {
         body: {
-          projectId: currentProject.id,
-          files
+          projectId: currentProject.id
         },
         headers: {
           Authorization: `Bearer ${sessionData.session.access_token}`,
@@ -99,36 +89,33 @@ const AnalyzeExtract: React.FC = () => {
       setAnalysisSteps(prev => ({ ...prev, pvCalculation: true }));
       setAnalysisProgress(90);
 
-      // Map GPT response to ExtractedData format - handle both value-wrapped and direct formats
-      const aiData = data?.extractedData || {};
-      
-      // Helper to extract value from wrapped or direct format
-      const getValue = (field: any, defaultVal: any = 'NOT_FOUND') => {
-        if (field === undefined || field === null) return defaultVal;
-        if (typeof field === 'object' && 'value' in field) {
-          return field.value === 'NOT_FOUND' ? defaultVal : field.value;
-        }
-        return field;
-      };
+      const aiData = data?.extractedData as Partial<ExtractedData> | undefined;
+      if (!aiData) {
+        throw new Error('Extraction returned no data');
+      }
 
       const extracted: ExtractedData = {
-        layers: Array.isArray(aiData.layers) 
-          ? aiData.layers.map((l: any) => getValue(l, '')).filter((l: string) => l && l !== 'NOT_FOUND')
-          : ['PV_MODULES', 'DC_CABLES', 'AC_CABLES', 'INVERTERS', 'GROUNDING', 'ANNOTATIONS'],
-        textLabels: Array.isArray(aiData.textLabels) 
-          ? aiData.textLabels.map((t: any) => getValue(t, '')).filter((t: string) => t && t !== 'NOT_FOUND')
-          : [],
+        layers: Array.isArray(aiData.layers) ? aiData.layers : [],
+        textLabels: Array.isArray(aiData.textLabels) ? aiData.textLabels : [],
         cableSummary: {
-          dcLength: Number(getValue(aiData.cableSummary?.dcLength, 0)) || 0,
-          acLength: Number(getValue(aiData.cableSummary?.acLength, 0)) || 0
+          dcLength: Number(aiData.cableSummary?.dcLength ?? 0) || 0,
+          acLength: Number(aiData.cableSummary?.acLength ?? 0) || 0,
         },
         pvParameters: {
-          moduleCount: Number(getValue(aiData.pvParameters?.moduleCount, 0)) || 0,
-          inverterCount: Number(getValue(aiData.pvParameters?.inverterCount, 0)) || 0,
-          stringCount: Number(getValue(aiData.pvParameters?.stringCount, 0)) || 0,
-          maxVoltage: Number(getValue(aiData.pvParameters?.maxVoltage, 1500)) || 1500,
-          totalCapacity: Number(getValue(aiData.pvParameters?.totalCapacity, 0)) || 0
-        }
+          moduleCount: Number(aiData.pvParameters?.moduleCount ?? 0) || 0,
+          inverterCount: Number(aiData.pvParameters?.inverterCount ?? 0) || 0,
+          stringCount: Number(aiData.pvParameters?.stringCount ?? 0) || 0,
+          arrayCount: Number(aiData.pvParameters?.arrayCount ?? 0) || 0,
+          maxVoltage: Number(aiData.pvParameters?.maxVoltage ?? 0) || 0,
+          totalCapacity: Number(aiData.pvParameters?.totalCapacity ?? 0) || 0,
+        },
+        bom: aiData.bom,
+        boq: aiData.boq,
+        trace: aiData.trace,
+        missingData: aiData.missingData,
+        notes: aiData.notes,
+        moduleParameters: aiData.moduleParameters,
+        inverterParameters: aiData.inverterParameters,
       };
 
       setExtractedData(extracted);
@@ -297,18 +284,49 @@ const AnalyzeExtract: React.FC = () => {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="flex flex-wrap gap-2">
-                  {extractedData.layers.map((layer, index) => (
-                    <span
-                      key={index}
-                      className="px-3 py-1.5 bg-muted rounded-full text-sm font-mono"
-                    >
-                      {layer}
-                    </span>
-                  ))}
-                </div>
+                {extractedData.layers.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {extractedData.layers.map((layer, index) => (
+                      <span
+                        key={index}
+                        className="px-3 py-1.5 bg-muted rounded-full text-sm font-mono"
+                      >
+                        {layer}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    No layers could be detected from the uploaded files (common with scanned PDFs or drawings without extractable text).
+                  </p>
+                )}
               </CardContent>
             </Card>
+
+            {/* Missing Data */}
+            {extractedData.missingData && extractedData.missingData.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-warning" />
+                    Missing / Insufficient Data
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="space-y-2 text-sm">
+                    {extractedData.missingData.map((m, idx) => (
+                      <li key={idx} className="p-3 rounded-lg bg-muted/30 border">
+                        <div className="font-medium">{m.field}</div>
+                        <div className="text-muted-foreground">{m.reason}</div>
+                        {m.sourceHint && (
+                          <div className="text-xs text-muted-foreground mt-1 font-mono">Hint: {m.sourceHint}</div>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Extracted Labels */}
             {extractedData.textLabels.length > 0 && (

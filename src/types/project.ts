@@ -47,6 +47,21 @@ export interface ExtractedParameter {
   unit?: string;
 }
 
+export interface SourcePointer {
+  sourceFile: string;
+  sourceReference: string; // page number or Excel cell
+}
+
+export interface BomBoqItem {
+  category: string; // e.g. Modules, Inverters, DC Cable, Structures, Protection
+  description: string;
+  quantity: number | null;
+  unit: string;
+  specification?: string;
+  source?: SourcePointer;
+  notes?: string;
+}
+
 export interface ExtractedData {
   layers: string[];
   textLabels: string[];
@@ -58,9 +73,20 @@ export interface ExtractedData {
     moduleCount: number;
     inverterCount: number;
     stringCount: number;
+    arrayCount?: number;
     maxVoltage: number;
     totalCapacity: number;
   };
+  /** Bill of Materials (components list) */
+  bom?: BomBoqItem[];
+  /** Bill of Quantities (measured / takeoff quantities) */
+  boq?: BomBoqItem[];
+  /** Traceability for key scalar outputs (counts, lengths, voltages, etc.) */
+  trace?: Record<string, ExtractedParameter>;
+  /** Missing fields and why they could not be extracted */
+  missingData?: { field: string; reason: string; sourceHint?: string }[];
+  /** High-level notes (e.g. PDF has no extractable text) */
+  notes?: string[];
   // Enhanced extraction with source traceability
   moduleParameters?: {
     voc: ExtractedParameter;

@@ -1,10 +1,28 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.94.0";
+import { getDocument } from "https://esm.sh/pdfjs-serverless@0.3.2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type",
 };
+
+async function extractPdfText(data: Uint8Array): Promise<string> {
+  const doc = await getDocument({ data, useSystemFonts: true }).promise;
+  const maxPages = Math.min(doc.numPages, 50);
+  const chunks: string[] = [];
+  for (let i = 1; i <= maxPages; i++) {
+    const page = await doc.getPage(i);
+    const textContent = await page.getTextContent();
+    const pageText = (textContent.items as any[])
+      .map((it) => (typeof it?.str === "string" ? it.str : ""))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (pageText) chunks.push(`[Page ${i}] ${pageText}`);
+  }
+  return chunks.join("\n");
+}
 
 interface ComplianceFinding {
   issueId: string;
@@ -93,23 +111,74 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Download standard files from storage
-    const standardContents: { name: string; content: string }[] = [];
-    
-    for (const standard of standards) {
-      if (standard.storage_path) {
-        const { data: fileData, error: downloadError } = await supabase.storage
-          .from("standards")
-          .download(standard.storage_path);
+    // Download and extract standards text from storage
+    const standardContents: { name: string; content: string; status: string }[] = [];
 
-        if (!downloadError && fileData) {
-          // For PDFs, we'll need to extract text - for now, just note the file name
-          // In production, you'd use a PDF parsing library or service
-          standardContents.push({
-            name: standard.file_name,
-            content: `[PDF Document: ${standard.file_name}] - Standard requirements from ${standard.name}`
-          });
-        }
+    for (const standard of standards) {
+      if (!standard.storage_path) continue;
+
+      const { data: fileData, error: downloadError } = await supabase.storage
+        .from("standards")
+        .download(standard.storage_path);
+
+      if (downloadError || !fileData) {
+        console.error("Standard download error:", standard.file_name, downloadError);
+        continue;
+      }
+
+      const buf = new Uint8Array(await fileData.arrayBuffer());
+      const extractedText = await extractPdfText(buf);
+      standardContents.push({
+        name: standard.file_name,
+        content: extractedText,
+        status: extractedText ? "ok" : "no_text",
+      });
+    }
+
+    if (standardContents.length === 0) {
+      return new Response(
+        JSON.stringify({
+          error: "No readable standards content found (PDFs may be scanned). Please upload text-based standards PDFs.",
+          findings: [],
+          compliancePercentage: 0,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    // Load and extract project file text directly from storage (so the AI sees real content)
+    const { data: projectFilesDb, error: projectFilesErr } = await supabase
+      .from("project_files")
+      .select("name,file_type,storage_path,size")
+      .eq("project_id", projectId)
+      .order("uploaded_at", { ascending: true });
+
+    if (projectFilesErr) {
+      console.error("Error fetching project_files:", projectFilesErr);
+      return new Response(
+        JSON.stringify({ error: "Failed to fetch project files" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    const projectFileContents: { name: string; content: string; status: string }[] = [];
+    for (const f of projectFilesDb || []) {
+      if (!f.storage_path) continue;
+      const { data: blob, error: dlErr } = await supabase.storage.from("project-files").download(f.storage_path);
+      if (dlErr || !blob) {
+        console.error("Project file download error:", f.name, dlErr);
+        continue;
+      }
+      const buf = new Uint8Array(await blob.arrayBuffer());
+      if (f.file_type === "pdf") {
+        const text = await extractPdfText(buf);
+        projectFileContents.push({ name: f.name, content: text, status: text ? "ok" : "no_text" });
+      } else {
+        projectFileContents.push({
+          name: f.name,
+          content: `[UNSUPPORTED_FILE_TYPE: ${f.file_type}]`,
+          status: "unsupported",
+        });
       }
     }
 
@@ -153,13 +222,40 @@ OUTPUT FORMAT (JSON array of findings):
   "summary": "Brief executive summary"
 }`;
 
+    const MAX_PER_DOC = 80_000;
+    const standardsText = standardContents
+      .map((s) => {
+        const clipped = (s.content || "").slice(0, MAX_PER_DOC);
+        const truncated = clipped.length < (s.content || "").length ? "\n[TRUNCATED]" : "";
+        return `\n--- ${s.name} [${s.status}] ---\n${clipped}${truncated}`;
+      })
+      .join("\n");
+
+    // Include both: (1) real extracted text from storage, plus (2) any structured context passed from client (e.g., extracted_data.json)
+    const clientProvided = (projectFiles || [])
+      .map((f) => `\n--- ${f.name} [client-provided] ---\n${(f.content || "").slice(0, MAX_PER_DOC)}`)
+      .join("\n");
+
+    const projectText = projectFileContents
+      .map((f) => {
+        const clipped = (f.content || "").slice(0, MAX_PER_DOC);
+        const truncated = clipped.length < (f.content || "").length ? "\n[TRUNCATED]" : "";
+        return `\n--- ${f.name} [${f.status}] ---\n${clipped}${truncated}`;
+      })
+      .join("\n");
+
     const userPrompt = `STANDARDS LIBRARY (${standardContents.length} documents):
-${standardContents.map(s => `\n--- ${s.name} ---\n${s.content}`).join("\n")}
+${standardsText}
 
-PROJECT FILES TO REVIEW (${projectFiles.length} files):
-${projectFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n")}
+PROJECT FILES TO REVIEW (${projectFileContents.length} files):
+${projectText}
 
-Please analyze these project files against ALL uploaded standards and provide a comprehensive compliance assessment. Check every line and parameter for alignment with the standards. Return the analysis as a JSON object with findings array, compliancePercentage, and summary.`;
+ADDITIONAL STRUCTURED CONTEXT (client-provided):
+${clientProvided}
+
+Please analyze these project files against ALL uploaded standards and provide a comprehensive compliance assessment. 
+If the project PDFs have no extractable text (status=no_text), return findings with severity=minor and clearly state INSUFFICIENT DATA + what exact source is needed.
+Return the analysis as a JSON object with findings array, compliancePercentage, and summary.`;
 
     // Call GPT-5.2 via Lovable AI Gateway
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
@@ -190,11 +286,23 @@ Please analyze these project files against ALL uploaded standards and provide a 
 
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
-      console.error("AI Gateway error:", errorText);
-      return new Response(
-        JSON.stringify({ error: "AI analysis failed" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      if (aiResponse.status === 429) {
+        return new Response(JSON.stringify({ error: "Rate limits exceeded, please try again later." }), {
+          status: 429,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      if (aiResponse.status === 402) {
+        return new Response(JSON.stringify({ error: "Payment required, please add funds to your Lovable AI workspace." }), {
+          status: 402,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      console.error("AI Gateway error:", aiResponse.status, errorText);
+      return new Response(JSON.stringify({ error: "AI analysis failed" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     const aiResult = await aiResponse.json();
