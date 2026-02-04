@@ -7,6 +7,7 @@ import ProjectSetup from '@/components/workflow/ProjectSetup';
 import AnalyzeExtract from '@/components/workflow/AnalyzeExtract';
 import StandardsUpload from '@/components/workflow/StandardsUpload';
 import DesignReview from '@/components/workflow/DesignReview';
+import StandardsLibrary from '@/components/workflow/StandardsLibrary';
 
 const WorkflowContent: React.FC = () => {
   const { currentStep, currentProject } = useProject();
@@ -47,6 +48,7 @@ const AppContent: React.FC = () => {
         <LandingPage
           onCreateNew={startNewProject}
           onViewHistory={() => setViewMode('history')}
+          onOpenStandardsLibrary={() => setViewMode('standards')}
           hasProjects={projectHistory.length > 0}
         />
       </MainLayout>
@@ -62,6 +64,15 @@ const AppContent: React.FC = () => {
           onBack={() => setViewMode('landing')}
           onSelectProject={openProjectFromHistory}
         />
+      </MainLayout>
+    );
+  }
+
+  // Standards Library view
+  if (viewMode === 'standards') {
+    return (
+      <MainLayout>
+        <StandardsLibrary onBack={() => setViewMode('landing')} />
       </MainLayout>
     );
   }
