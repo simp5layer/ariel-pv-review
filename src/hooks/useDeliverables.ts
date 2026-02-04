@@ -20,6 +20,10 @@ export function useDeliverables() {
 
   const pollJobStatus = useCallback(async (jobId: string): Promise<GenerationResult | null> => {
     let attempts = 0;
+    let jobFound = false;
+
+    // Initial delay to allow the job record to be committed
+    await new Promise((resolve) => setTimeout(resolve, 1000));
 
     while (attempts < MAX_POLL_ATTEMPTS) {
       attempts++;
@@ -28,13 +32,27 @@ export function useDeliverables() {
         .from("processing_jobs")
         .select("status, progress, result, error")
         .eq("id", jobId)
-        .single();
+        .maybeSingle();
+
+      // Handle case where job is not yet visible (race condition or RLS)
+      if (!data) {
+        if (attempts <= 5) {
+          // Give it a few more tries for the job to appear
+          console.log(`Job ${jobId} not found yet, attempt ${attempts}/5`);
+          await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL));
+          continue;
+        }
+        // After 5 attempts, if still no job, throw error
+        console.error("Job not found after multiple attempts:", jobId);
+        throw new Error("Job not found. Please try again.");
+      }
 
       if (error) {
         console.error("Error polling job status:", error);
         throw new Error("Failed to retrieve job status");
       }
 
+      jobFound = true;
       setProgress(data.progress || 0);
 
       if (data.status === "completed") {
