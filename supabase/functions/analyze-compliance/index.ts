@@ -8,20 +8,26 @@ const corsHeaders = {
 };
 
 async function extractPdfText(data: Uint8Array): Promise<string> {
-  const doc = await getDocument({ data, useSystemFonts: true }).promise;
-  const maxPages = Math.min(doc.numPages, 50);
-  const chunks: string[] = [];
-  for (let i = 1; i <= maxPages; i++) {
-    const page = await doc.getPage(i);
-    const textContent = await page.getTextContent();
-    const pageText = (textContent.items as any[])
-      .map((it) => (typeof it?.str === "string" ? it.str : ""))
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (pageText) chunks.push(`[Page ${i}] ${pageText}`);
+  try {
+    const doc = await getDocument({ data, useSystemFonts: true }).promise;
+    const maxPages = Math.min(doc.numPages, 50);
+    const chunks: string[] = [];
+    for (let i = 1; i <= maxPages; i++) {
+      const page = await doc.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = (textContent.items as any[])
+        .map((it) => (typeof it?.str === "string" ? it.str : ""))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (pageText) chunks.push(`[Page ${i}] ${pageText}`);
+    }
+    return chunks.join("\n");
+  } catch (err) {
+    console.error("PDF extraction error:", err);
+    // Return empty string instead of throwing - the AI will handle missing text gracefully
+    return "";
   }
-  return chunks.join("\n");
 }
 
 interface ComplianceFinding {
