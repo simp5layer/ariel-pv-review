@@ -43,12 +43,37 @@ interface AnalysisRequest {
 async function processComplianceJob(
   jobId: string,
   projectId: string,
+  userId: string,
+  userEmail: string,
   clientProjectFiles: { name: string; content: string }[],
   supabaseUrl: string,
   supabaseServiceKey: string,
   lovableApiKey: string
 ) {
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  // Create a real submission record first
+  let submissionId: string | null = null;
+  try {
+    const { data: submission, error: subError } = await supabase
+      .from("submissions")
+      .insert({
+        project_id: projectId,
+        submitted_by: userEmail || "Engineer",
+        status: "pending",
+        compliance_percentage: 0,
+      })
+      .select()
+      .single();
+
+    if (subError) {
+      console.error("Failed to create submission:", subError);
+    } else {
+      submissionId = submission.id;
+    }
+  } catch (err) {
+    console.error("Submission creation error:", err);
+  }
 
   try {
     // Update job to processing
@@ -57,11 +82,10 @@ async function processComplianceJob(
       .update({ status: "processing", progress: 10 })
       .eq("id", jobId);
 
-    // Fetch global standards
+    // Fetch global standards (user's standards library)
     const { data: standards, error: standardsError } = await supabase
       .from("standards_library")
-      .select("*")
-      .eq("is_global", true);
+      .select("*");
 
     if (standardsError || !standards || standards.length === 0) {
       await supabase.from("processing_jobs").update({
@@ -72,16 +96,17 @@ async function processComplianceJob(
           compliancePercentage: 0,
           summary: "No standards found in library. Please upload standards first.",
           standardsUsed: [],
+          submissionId,
         },
       }).eq("id", jobId);
       return;
     }
 
-    await supabase.from("processing_jobs").update({ progress: 20 }).eq("id", jobId);
+    await supabase.from("processing_jobs").update({ progress: 15 }).eq("id", jobId);
 
     // Extract standards text (limit pages to reduce CPU)
     const standardContents: { name: string; content: string; status: string }[] = [];
-    for (const standard of standards.slice(0, 5)) { // Limit to 5 standards
+    for (const standard of standards.slice(0, 8)) { // Allow up to 8 standards
       if (!standard.storage_path) continue;
 
       const { data: fileData, error: downloadError } = await supabase.storage
@@ -94,7 +119,7 @@ async function processComplianceJob(
       }
 
       const buf = new Uint8Array(await fileData.arrayBuffer());
-      const extractedText = await extractPdfText(buf, 15); // Limit to 15 pages per standard
+      const extractedText = await extractPdfText(buf, 20); // Limit to 20 pages per standard
       standardContents.push({
         name: standard.file_name,
         content: extractedText,
@@ -136,71 +161,103 @@ async function processComplianceJob(
 
     await supabase.from("processing_jobs").update({ progress: 60 }).eq("id", jobId);
 
-    // Build prompt
-    const systemPrompt = `You are an expert PV (photovoltaic) design engineer conducting a comprehensive design review. Your task is to analyze project files against uploaded standards and identify compliance issues.
+    // Build prompt with enhanced instructions for deep analysis
+    const systemPrompt = `You are an expert PV (photovoltaic) design engineer with 20+ years of experience conducting comprehensive design reviews per IEC, SEC, SBC, SASO, MOMRA, SERA, WERA, and NEC standards.
+
+MISSION: Perform DEEP ANALYSIS of ALL provided project files (drawings, specifications, datasheets) against ALL provided regulatory standards. Extract every technical parameter, calculation, and design decision. Verify each against applicable clauses.
+
+ANALYSIS METHODOLOGY:
+1. DOCUMENT PARSING: Extract ALL technical data from project files:
+   - Module specifications (Pmax, Voc, Isc, Vmp, Imp, temperature coefficients)
+   - Inverter specifications (MPPT range, max input voltage/current, efficiency)
+   - String configurations (modules per string, strings per inverter)
+   - Cable specifications (type, cross-section, length, voltage drop)
+   - Protection devices (fuses, breakers, surge protectors)
+   - Grounding and bonding details
+
+2. STANDARDS VERIFICATION: For EACH extracted parameter:
+   - Identify applicable standard clause(s)
+   - Quote the requirement verbatim
+   - Compare design value vs required value
+   - Calculate margins and verify compliance
+
+3. ENGINEERING CALCULATIONS: Verify with explicit formulas:
+   - String Voc = N_modules × Voc_module × (1 + Voc_temp_coeff × (T_min - 25))
+   - Voltage drop = (2 × L × I × ρ) / A
+   - Cable ampacity vs operating current
+   - Protection device coordination
 
 CRITICAL RULES:
-1. ONLY reference clauses and requirements that are explicitly stated in the uploaded standards documents
-2. Never invent or assume requirements - if data is missing, mark as "INSUFFICIENT DATA"
-3. Every finding MUST include specific clause reference and evidence pointer
+- Reference ONLY clauses explicitly present in uploaded standards
+- If data is missing, mark finding as "INSUFFICIENT DATA" and list what's missing
+- Every finding MUST cite: file name, page/section, and exact clause number
+- Target approximately 8 findings: 1 Critical, 5 Major, 2 Minor (if issues exist)
 
-SEVERITY CLASSIFICATION:
-- CRITICAL: Safety hazards, code violations, system won't function
-- MAJOR: Performance degradation, warranty issues, significant rework needed
-- MINOR: Optimization opportunities, documentation gaps
-- PASS: Requirement verified and met
+SEVERITY (use engineering judgment):
+- CRITICAL (P0): Safety hazards, code violations blocking commissioning
+- MAJOR (P1): Performance issues, warranty risks, rework needed
+- MINOR (P2): Optimizations, documentation gaps
 
-OUTPUT FORMAT (JSON object):
+OUTPUT FORMAT (JSON):
 {
   "findings": [
     {
-      "issueId": "unique-id",
-      "name": "Short issue title",
-      "description": "Detailed description",
-      "location": "Where found",
-      "standardReference": "Standard name, clause number",
-      "severity": "critical|major|minor|pass",
-      "actionType": "corrective|recommendation",
-      "action": "Steps to resolve",
-      "evidencePointer": "File: X, Page: Y",
-      "violatedRequirement": "Requirement text",
-      "riskExplanation": "What happens if not fixed",
-      "impactIfUnresolved": "Consequences"
+      "issueId": "NCR-001",
+      "name": "String Voltage Exceeds Inverter Max Input",
+      "description": "Detailed technical description with calculations",
+      "location": "SLD Drawing, Section 3.2",
+      "standardReference": "IEC 62548 Clause 7.2.1",
+      "severity": "critical",
+      "actionType": "corrective",
+      "action": "Reduce modules per string from 22 to 20 to maintain Voc < 1000V",
+      "evidencePointer": "File: Project_SLD.pdf, Page: 3",
+      "violatedRequirement": "String open-circuit voltage shall not exceed inverter maximum input voltage under lowest operating temperature",
+      "riskExplanation": "Over-voltage can damage inverter input stage and void warranty",
+      "impactIfUnresolved": "System cannot be commissioned; potential equipment damage"
     }
   ],
-  "compliancePercentage": 85,
-  "summary": "Brief executive summary"
+  "compliancePercentage": 72,
+  "summary": "Brief executive summary of overall compliance status"
 }`;
 
-    const MAX_PER_DOC = 40000; // Reduced from 80000
+    const MAX_PER_DOC = 50000;
     const standardsText = standardContents
       .map((s) => {
         const clipped = (s.content || "").slice(0, MAX_PER_DOC);
-        return `\n--- ${s.name} [${s.status}] ---\n${clipped}`;
+        return `\n=== STANDARD: ${s.name} [${s.status}] ===\n${clipped}`;
       })
-      .join("\n");
+      .join("\n\n");
 
     const clientProvided = (clientProjectFiles || [])
-      .map((f) => `\n--- ${f.name} [client-provided] ---\n${(f.content || "").slice(0, MAX_PER_DOC)}`)
-      .join("\n");
+      .map((f) => `\n=== PROJECT FILE: ${f.name} ===\n${(f.content || "").slice(0, MAX_PER_DOC)}`)
+      .join("\n\n");
 
     const projectText = projectFileContents
       .map((f) => {
         const clipped = (f.content || "").slice(0, MAX_PER_DOC);
-        return `\n--- ${f.name} [${f.status}] ---\n${clipped}`;
+        return `\n=== PROJECT FILE: ${f.name} [${f.status}] ===\n${clipped}`;
       })
-      .join("\n");
+      .join("\n\n");
 
-    const userPrompt = `STANDARDS LIBRARY (${standardContents.length} documents):
+    const userPrompt = `## REGULATORY STANDARDS LIBRARY (${standardContents.length} documents)
+These are the applicable international and national standards that MUST be used for compliance verification:
 ${standardsText}
 
-PROJECT FILES TO REVIEW (${projectFileContents.length} files):
+## PROJECT DESIGN FILES (${projectFileContents.length} uploaded files)
+These are the engineering drawings, specifications, and calculations to review:
 ${projectText}
 
-ADDITIONAL STRUCTURED CONTEXT (client-provided):
+## ADDITIONAL CONTEXT
 ${clientProvided}
 
-Analyze these project files against ALL uploaded standards and provide compliance assessment. Return JSON with findings, compliancePercentage, and summary.`;
+INSTRUCTIONS:
+1. Parse ALL project files thoroughly - extract every technical specification
+2. Cross-reference EACH specification against the applicable standards
+3. Perform independent calculations to verify design values
+4. Generate detailed findings with evidence pointers
+5. Calculate overall compliance percentage using weighted scoring
+
+Provide your analysis as JSON with findings array, compliancePercentage, and summary.`;
 
     await supabase.from("processing_jobs").update({ progress: 70 }).eq("id", jobId);
 
@@ -271,19 +328,57 @@ Analyze these project files against ALL uploaded standards and provide complianc
       response: analysisContent.substring(0, 10000),
       model: "openai/gpt-5.2",
       tokens_used: tokensUsed,
-      validation_status: "validated"
+      validation_status: "validated",
+      submission_id: submissionId,
     });
+
+    // Calculate compliance percentage with weighted scoring (ITRFFE model)
+    const findings = analysis.findings || [];
+    const criticalCount = findings.filter((f: any) => f.severity === "critical").length;
+    const majorCount = findings.filter((f: any) => f.severity === "major").length;
+    const minorCount = findings.filter((f: any) => f.severity === "minor").length;
+    const weightedScore = Math.max(0, 100 - (criticalCount * 15 + majorCount * 8 + minorCount * 3));
+    const finalCompliance = analysis.compliancePercentage ?? weightedScore;
+
+    // Update the submission with final compliance percentage
+    if (submissionId) {
+      await supabase.from("submissions").update({
+        status: finalCompliance >= 80 ? "passed" : "failed",
+        compliance_percentage: finalCompliance,
+        completed_at: new Date().toISOString(),
+      }).eq("id", submissionId);
+
+      // Store compliance findings in database
+      for (const finding of findings) {
+        await supabase.from("compliance_findings").insert({
+          submission_id: submissionId,
+          issue_id: finding.issueId || `NCR-${crypto.randomUUID().slice(0, 8)}`,
+          name: finding.name || "Unnamed Finding",
+          description: finding.description || "",
+          location: finding.location || "Unknown",
+          standard_reference: finding.standardReference || "N/A",
+          severity: finding.severity || "minor",
+          action_type: finding.actionType || "recommendation",
+          action: finding.action || "Review required",
+          evidence_pointer: finding.evidencePointer,
+          violated_requirement: finding.violatedRequirement,
+          risk_explanation: finding.riskExplanation,
+          impact_if_unresolved: finding.impactIfUnresolved,
+        });
+      }
+    }
 
     // Complete the job
     await supabase.from("processing_jobs").update({
       status: "completed",
       progress: 100,
       result: {
-        findings: analysis.findings || [],
-        compliancePercentage: analysis.compliancePercentage || 0,
+        findings,
+        compliancePercentage: finalCompliance,
         summary: analysis.summary || "Analysis complete",
         standardsUsed: standards.map(s => s.file_name),
         tokensUsed,
+        submissionId,
       },
     }).eq("id", jobId);
 
@@ -354,6 +449,8 @@ Deno.serve(async (req) => {
       processComplianceJob(
         job.id,
         projectId,
+        user.id,
+        user.email || "Engineer",
         projectFiles || [],
         supabaseUrl,
         supabaseServiceKey,

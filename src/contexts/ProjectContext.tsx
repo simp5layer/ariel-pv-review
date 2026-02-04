@@ -192,19 +192,22 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }));
         setFindings(mappedFindings);
         
-        // Create submission
-        const passCount = mappedFindings.filter(f => f.severity === 'pass').length;
-        const totalChecks = mappedFindings.length;
-        const calculatedCompliance = totalChecks > 0 
-          ? Math.round((passCount / totalChecks) * 100) 
-          : 100;
-        const compliancePercentage = resultData.compliancePercentage ?? calculatedCompliance;
+        // Use the REAL submission ID from the backend database
+        const realSubmissionId: string = resultData.submissionId;
         
-        // Use the real submission ID from the backend if available
-        const realSubmissionId: string | undefined = resultData.submissionId;
+        if (!realSubmissionId) {
+          console.warn('No submissionId returned from backend - deliverables generation may fail');
+        }
+        
+        // Calculate compliance using ITRFFE weighted model
+        const criticalCount = mappedFindings.filter(f => f.severity === 'critical').length;
+        const majorCount = mappedFindings.filter(f => f.severity === 'major').length;
+        const minorCount = mappedFindings.filter(f => f.severity === 'minor').length;
+        const weightedScore = Math.max(0, 100 - (criticalCount * 15 + majorCount * 8 + minorCount * 3));
+        const compliancePercentage = resultData.compliancePercentage ?? weightedScore;
         
         const newSubmission: Submission = {
-          id: realSubmissionId || crypto.randomUUID(),
+          id: realSubmissionId || crypto.randomUUID(), // Fallback only if backend fails
           submittedBy: user?.email || 'Engineer User',
           submittedAt: new Date(),
           completedAt: new Date(),
@@ -214,6 +217,19 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         };
         addSubmission(newSubmission);
       } else {
+        // Even with no findings, we might have a submission ID
+        if (resultData.submissionId) {
+          const newSubmission: Submission = {
+            id: resultData.submissionId,
+            submittedBy: user?.email || 'Engineer User',
+            submittedAt: new Date(),
+            completedAt: new Date(),
+            status: 'passed',
+            compliancePercentage: 100,
+            findings: []
+          };
+          addSubmission(newSubmission);
+        }
         setFindings([]);
         console.warn('No compliance findings returned from AI analysis');
       }
