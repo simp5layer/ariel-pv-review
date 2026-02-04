@@ -616,11 +616,12 @@ Deno.serve(async (req) => {
 
   try {
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
+    if (!authHeader?.startsWith("Bearer ")) {
       return json({ error: "Missing authorization header" }, 401);
     }
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
 
@@ -628,14 +629,21 @@ Deno.serve(async (req) => {
       return json({ error: "AI service not configured" }, 500);
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    // Use anon key client with user's auth header for JWT validation
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    const { data: { user }, error: authError } = await authClient.auth.getUser(token);
 
     if (authError || !user) {
+      console.error("Auth validation failed:", authError?.message);
       return json({ error: "Unauthorized" }, 401);
     }
+
+    // Use service role for admin operations
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     const { projectId, submissionId, findings, extractedData } = await req.json() as GenerateRequest;
 
