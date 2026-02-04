@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 import { Project, UploadedFile, SystemType } from '@/types/project';
 import { toast } from 'sonner';
 
@@ -11,6 +12,7 @@ interface CreateProjectData {
 }
 
 export function useProjectManagement() {
+  const { user } = useAuth();
   const [isCreating, setIsCreating] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
@@ -19,13 +21,12 @@ export function useProjectManagement() {
     setUploadProgress(0);
 
     try {
-      // Get current user
-      const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !sessionData.session) {
+      // Use auth context user (guaranteed to be set if component is rendered)
+      if (!user) {
         throw new Error('Not authenticated');
       }
 
-      const userId = sessionData.session.user.id;
+      const userId = user.id;
 
       // Step 1: Create project in database
       const { data: projectData, error: projectError } = await supabase
