@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo } from 'react';
 import { useProject } from '@/contexts/ProjectContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -34,17 +34,17 @@ import {
   Calculator
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { toast } from 'sonner';
 
-// Mock deliverables for demo
-const createMockDeliverables = (submissionNumber: number): Deliverable[] => [
-  { id: '1', type: 'ai_prompt_log', name: 'AI Prompt Log', status: 'generated', generatedAt: new Date(), submissionNumber },
-  { id: '2', type: 'design_review_report', name: 'Design Review Report', status: 'generated', generatedAt: new Date(), submissionNumber },
-  { id: '3', type: 'issue_register', name: 'Issue Register', status: 'generated', generatedAt: new Date(), submissionNumber },
-  { id: '4', type: 'compliance_checklist', name: 'Compliance Checklist', status: 'generated', generatedAt: new Date(), submissionNumber },
-  { id: '5', type: 'recalculation_sheet', name: 'Recalculation Sheet', status: 'not_generated' },
-  { id: '6', type: 'redline_notes', name: 'Redline Notes', status: 'not_generated' },
-  { id: '7', type: 'bom_boq', name: 'BoM & BoQ', status: 'not_generated' },
-  { id: '8', type: 'risk_reflection', name: 'Risk Reflection', status: 'not_generated' },
+const deliverableOrder: DeliverableType[] = [
+  'ai_prompt_log',
+  'design_review_report',
+  'issue_register',
+  'compliance_checklist',
+  'recalculation_sheet',
+  'redline_notes',
+  'bom_boq',
+  'risk_reflection'
 ];
 
 const DesignReview: React.FC = () => {
@@ -59,8 +59,27 @@ const DesignReview: React.FC = () => {
     runComplianceReview
   } = useProject();
 
-  const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
-  const [isGeneratingDeliverables, setIsGeneratingDeliverables] = useState(false);
+  const deliverables: Deliverable[] = useMemo(() => {
+    const now = new Date();
+    const hasFindings = findings.length > 0;
+    const hasBomBoq = Boolean((extractedData?.bom?.length || 0) + (extractedData?.boq?.length || 0));
+
+    return deliverableOrder.map((type) => {
+      let status: Deliverable['status'] = 'not_generated';
+      if (type === 'bom_boq' && hasBomBoq) status = 'generated';
+      if ((type === 'issue_register' || type === 'compliance_checklist') && hasFindings) status = 'generated';
+      if (type === 'ai_prompt_log' && (hasFindings || hasBomBoq)) status = 'generated';
+
+      return {
+        id: type,
+        type,
+        name: DELIVERABLE_METADATA[type].name,
+        status,
+        generatedAt: status !== 'not_generated' ? now : undefined,
+        submissionNumber: submissions.length || undefined,
+      };
+    });
+  }, [extractedData?.bom, extractedData?.boq, findings.length, submissions.length]);
 
   const handleRunReview = async () => {
     // Build project file content from extracted data for AI analysis
@@ -91,44 +110,25 @@ const DesignReview: React.FC = () => {
       });
     }
 
-    // Run real compliance analysis
-    await runComplianceReview(projectFiles);
-    
-    // Generate deliverables after review completes
-    setTimeout(() => {
-      setDeliverables(createMockDeliverables(submissions.length + 1));
-    }, 500);
+    try {
+      await runComplianceReview(projectFiles);
+      toast.success('Design review completed');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Design review failed';
+      toast.error(msg);
+    }
   };
 
   const handleGenerateMissing = () => {
-    setIsGeneratingDeliverables(true);
-    setTimeout(() => {
-      setDeliverables(prev => prev.map(d => ({
-        ...d,
-        status: 'generated',
-        generatedAt: d.generatedAt || new Date(),
-        submissionNumber: submissions.length
-      })));
-      setIsGeneratingDeliverables(false);
-    }, 2000);
+    toast.info('Automatic deliverable generation is not wired yet. Run Analyze & Extract + Run Design Review to populate data.');
   };
 
   const handleRegenerateAll = () => {
-    setIsGeneratingDeliverables(true);
-    setTimeout(() => {
-      setDeliverables(prev => prev.map(d => ({
-        ...d,
-        status: 'updated',
-        updatedAt: new Date(),
-        submissionNumber: submissions.length
-      })));
-      setIsGeneratingDeliverables(false);
-    }, 3000);
+    toast.info('Regeneration is not wired yet.');
   };
 
   const handleExportPackage = () => {
-    // Mock export - in real implementation, this would generate a ZIP/bundle
-    alert('Exporting deliverables package...\n\nIn production, this would download a ZIP containing all 8 deliverables.');
+    toast.info('Export package is not wired yet.');
   };
 
   const criticalCount = findings.filter(f => f.severity === 'critical').length;
@@ -207,6 +207,10 @@ const DesignReview: React.FC = () => {
                   <TabsTrigger value="findings" className="gap-2">
                     <ClipboardCheck className="w-4 h-4" />
                     Compliance Findings
+                  </TabsTrigger>
+                  <TabsTrigger value="bom" className="gap-2">
+                    <Package className="w-4 h-4" />
+                    BoM & BoQ
                   </TabsTrigger>
                   <TabsTrigger value="timeline" className="gap-2">
                     <Clock className="w-4 h-4" />
@@ -443,6 +447,124 @@ const DesignReview: React.FC = () => {
                 </CardContent>
               </Card>
             </TabsContent>
+
+            <TabsContent value="bom" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Package className="w-5 h-5 text-primary" />
+                    Bill of Materials (BoM) & Bill of Quantities (BoQ)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {!extractedData ? (
+                    <p className="text-sm text-muted-foreground">
+                      Run <strong>Analyze & Extract</strong> first to generate BoM/BoQ from your uploaded files.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="grid gap-4 sm:grid-cols-3">
+                        <StatCard title="Modules" value={extractedData.pvParameters.moduleCount} icon={Calculator} variant="default" />
+                        <StatCard title="Strings" value={extractedData.pvParameters.stringCount} icon={Calculator} variant="default" />
+                        <StatCard title="Inverters" value={extractedData.pvParameters.inverterCount} icon={Calculator} variant="default" />
+                      </div>
+
+                      {/* BoM */}
+                      <div className="space-y-3">
+                        <h3 className="text-sm font-semibold">BoM</h3>
+                        {extractedData.bom && extractedData.bom.length > 0 ? (
+                          <div className="rounded-lg border overflow-hidden">
+                            <Table>
+                              <TableHeader>
+                                <TableRow className="bg-muted/50">
+                                  <TableHead className="w-[160px]">Category</TableHead>
+                                  <TableHead>Description</TableHead>
+                                  <TableHead className="w-[110px]">Qty</TableHead>
+                                  <TableHead className="w-[90px]">Unit</TableHead>
+                                  <TableHead className="w-[260px]">Source</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {extractedData.bom.map((it, idx) => (
+                                  <TableRow key={idx} className="hover:bg-muted/30">
+                                    <TableCell className="font-medium">{it.category}</TableCell>
+                                    <TableCell>
+                                      <div className="space-y-1">
+                                        <div className="text-sm">{it.description}</div>
+                                        {it.specification && (
+                                          <div className="text-xs text-muted-foreground font-mono">{it.specification}</div>
+                                        )}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="font-mono">{it.quantity ?? '—'}</TableCell>
+                                    <TableCell className="font-mono">{it.unit}</TableCell>
+                                    <TableCell className="text-xs text-muted-foreground">
+                                      {it.source ? `${it.source.sourceFile} • ${it.source.sourceReference}` : '—'}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No BoM items extracted.</p>
+                        )}
+                      </div>
+
+                      {/* BoQ */}
+                      <div className="space-y-3">
+                        <h3 className="text-sm font-semibold">BoQ</h3>
+                        {extractedData.boq && extractedData.boq.length > 0 ? (
+                          <div className="rounded-lg border overflow-hidden">
+                            <Table>
+                              <TableHeader>
+                                <TableRow className="bg-muted/50">
+                                  <TableHead className="w-[160px]">Category</TableHead>
+                                  <TableHead>Description</TableHead>
+                                  <TableHead className="w-[110px]">Qty</TableHead>
+                                  <TableHead className="w-[90px]">Unit</TableHead>
+                                  <TableHead className="w-[260px]">Source</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {extractedData.boq.map((it, idx) => (
+                                  <TableRow key={idx} className="hover:bg-muted/30">
+                                    <TableCell className="font-medium">{it.category}</TableCell>
+                                    <TableCell>
+                                      <div className="space-y-1">
+                                        <div className="text-sm">{it.description}</div>
+                                        {it.specification && (
+                                          <div className="text-xs text-muted-foreground font-mono">{it.specification}</div>
+                                        )}
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="font-mono">{it.quantity ?? '—'}</TableCell>
+                                    <TableCell className="font-mono">{it.unit}</TableCell>
+                                    <TableCell className="text-xs text-muted-foreground">
+                                      {it.source ? `${it.source.sourceFile} • ${it.source.sourceReference}` : '—'}
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">No BoQ items extracted.</p>
+                        )}
+                      </div>
+
+                      {extractedData.notes && extractedData.notes.length > 0 && (
+                        <div className="text-xs text-muted-foreground">
+                          {extractedData.notes.map((n, idx) => (
+                            <div key={idx}>• {n}</div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
               </Tabs>
             </div>
 
@@ -453,7 +575,7 @@ const DesignReview: React.FC = () => {
                 onGenerateMissing={handleGenerateMissing}
                 onRegenerateAll={handleRegenerateAll}
                 onExportPackage={handleExportPackage}
-                isGenerating={isGeneratingDeliverables}
+                isGenerating={false}
                 submissionNumber={submissions.length}
               />
             </div>
