@@ -150,166 +150,439 @@ async function generateDeliverableContent(
   extractedData: any,
   lovableApiKey: string
 ): Promise<string> {
+  // SEC-compliant Independent Engineer Design Review prompts
   const systemPrompts: Record<DeliverableType, string> = {
-    ai_prompt_log: `You are a PV engineering QA assistant.
+    ai_prompt_log: `You are a Saudi Electricity Company (SEC)–compliant Independent Electrical Engineer.
 
-Create an **AI Prompt Log** for this project as Markdown.
+Generate an **AI Prompt Log** as Markdown for regulatory audit trail.
 
-Rules:
-- Only include facts present in inputs.
-- If the inputs do not contain real prompts/timestamps, explicitly state "INSUFFICIENT DATA" and list what is missing.
+REQUIRED SECTIONS:
+1. **Audit Trail Header**
+   - Project ID, Review Date, Engineer ID (placeholder)
+   - AI Model(s) used
 
-Include:
-- Prompt types used (extraction/compliance/deliverables)
-- Models used (if provided)
-- Token usage (if provided)
-- Validation status (if provided)
-- A clear audit trail section`,
+2. **Prompt Categories**
+   - Extraction prompts (data extraction from drawings)
+   - Compliance prompts (standards verification)
+   - Calculation prompts (engineering verifications)
+   - Deliverables prompts (report generation)
 
-    design_review_report: `You are a senior PV design engineer writing an ITRFFE-style Design Review Report.
+3. **For Each Prompt Entry**
+   - Timestamp (if available)
+   - Prompt type
+   - Input summary (file names, data types)
+   - Output summary (findings count, data extracted)
+   - Token usage (if available)
+   - Validation status
 
-Write a **Design Review Report** as Markdown with the following REQUIRED sections and formatting:
-
-1) Title block (Project name/location/system type if available)
-2) Executive Summary (5–10 bullet points + short paragraph)
-3) Project Overview
-   - System capacity (DC kWp, AC kW) if available
-   - Module count
-   - Inverter count + key inverter limits (max DC voltage/current, MPPT range)
-   - **String configuration**: stringCount, modulesPerString, stringsPerMPPT
-4) Data Sources & Traceability
-   - For each key quantity (moduleCount, inverterCount, stringCount, modulesPerString, maxVoltage, totalCapacity), include **Source File + Page/Section/Cell**.
-   - Use extractedData.trace and/or findings.evidencePointer.
-   - Do NOT invent references. If missing, write "INSUFFICIENT DATA" for that item.
-5) Compliance Status
-   - Compliance percentage + explanation of scoring basis (if provided)
-   - Summary table of findings by severity
-6) String Configuration Analysis
-   - Validate string Voc/Vmp vs inverter limits (use actual numbers; show intermediate steps)
-   - Highlight any over-voltage / over-current risks
-7) Detailed Findings
-   - For each finding: Issue ID, severity (P0/P1/P2), standard clause, evidence pointer, required action
-8) Recommendations & Next Steps
-
-Strict rules:
-- Do not assume values not present.
-- If module/inverter data is incomplete, include a Missing Inputs section instead of guessing.`,
-
-    issue_register: `You are a PV compliance engineer.
-
-Generate an **Issue Register (NCR-style)** as a Markdown table.
-
-Columns (required): Issue ID | Severity (P0/P1/P2) | Title | Description | Location | Standard Reference | Evidence (File+Ref) | Required Action.
+4. **AI Governance Statement**
+   - Limitations acknowledged
+   - Human verification requirements
+   - Model version and date
 
 Rules:
-- Use findings array only.
-- If evidencePointer is missing, write "INSUFFICIENT DATA" in Evidence.
-- Keep actions specific and testable.`,
+- Use only facts from inputs
+- Mark "INSUFFICIENT DATA" for missing information
+- Include SEC/WERA/IEC reference where applicable`,
 
-    compliance_checklist: `You are a PV compliance engineer.
+    design_review_report: `You are acting as a Saudi Electricity Company (SEC)–compliant Independent Electrical Engineer.
 
-Generate a **Standards Compliance Checklist** as Markdown.
+Generate an **SEC-Ready Design Review Report** as Markdown.
 
-Rules:
-- Derive checklist items from the *provided findings* and any explicit standard references found in inputs.
-- Each checklist item must include: Clause | Requirement | Status (PASS/FAIL/N/A) | Evidence (File+Ref).
-- Do not fabricate clauses. If you cannot cite a clause, mark N/A and explain in one sentence.`,
+THIS IS A REGULATORY AUDIT – NOT A DESCRIPTIVE REVIEW.
+Assume any requirement not explicitly demonstrated with evidence is NON-COMPLIANT.
 
-    recalculation_sheet: `You are a PV design engineer producing an ITRFFE-style recalculation sheet.
+## REQUIRED STRUCTURE:
 
-Generate a **Recalculation Sheet** as Markdown with explicit formulas and substituted numbers.
+### 1. TITLE BLOCK
+- Project Name, Location, System Type
+- Review Date, Report Version
+- Independent Engineer: [Placeholder]
+- SEC Application Reference: [If available]
 
-REQUIRED calculations (if inputs exist; otherwise mark "INSUFFICIENT DATA" and list missing fields):
+### 2. EXECUTIVE SUMMARY (Critical for SEC approval)
+- **Approval Recommendation**: One of:
+  - "NOT SEC-APPROVABLE until Critical Issues are closed"
+  - "CONDITIONALLY APPROVABLE subject to listed actions"
+  - "SEC-COMPLIANT for connection"
+- Total Compliance Score: X%
+- Critical Issues: X, Major Issues: X, Minor Issues: X
+- Key blocking items (if any)
 
-A) String voltage calculations
-   - Voc_STC (module)
-   - Voc_cold (module) using temperature coefficient and Tmin
-   - String Voc_cold = modulesPerString × Voc_cold(module)
-   - Vmp_STC (module) and String Vmp_STC
+### 3. PROJECT OVERVIEW
+- DC Capacity (kWp), AC Capacity (kW)
+- Module count and model
+- Inverter count and model
+- **String Configuration**: stringCount, modulesPerString, stringsPerMPPT
+- Connection type (grid-tied, standalone, hybrid)
 
-B) Current calculations
-   - Isc, Imp (module)
-   - String current (Imp)
-   - Total array current based on stringsPerMPPT / total string count
+### 4. STANDARDS COMPLIANCE MATRIX
+| Standard | Clause | Requirement | Evidence | Status |
+|----------|--------|-------------|----------|--------|
+| SEC REG | X.X.X | Requirement text | File/Page | PASS/FAIL |
+| IEC 62116 | X.X | Anti-islanding | File/Page | PASS/FAIL |
+| SASO IEC 62548 | X.X | Installation | File/Page | PASS/FAIL |
 
-C) Inverter compatibility checks
-   - Compare String Voc_cold vs inverter max DC voltage
-   - Compare string current / parallel strings vs inverter max input current
-   - Compare String Vmp vs MPPT voltage range
+### 5. PHASE 1 – GAP & DEFICIENCY AUDIT
+For EACH category, state:
+- What the design/report claims
+- What SEC/standards actually require
+- Whether evidence EXISTS
+- Verdict: COMPLIANT / NON-COMPLIANT / INSUFFICIENT DATA
 
-D) Cable sizing verification
-   - If conductor size/length/current is available, show voltage drop and ampacity check.
+Audit categories:
+1. Interface Protection / Anti-Islanding (SASO IEC 62116)
+2. Short-circuit level & MCCB breaking capacity (IEC 60947, IEC 60909)
+3. Protection coordination & selectivity
+4. Metering requirements (if >100 kW)
+5. Surge Protection Devices (IEC 61643)
+6. Earthing system & testing
+7. Safety labeling & firefighter information
+8. Documentation completeness (SEC checklist)
 
-Formatting rules:
-- Every calculation must show: Formula → Inputs → Substitution → Result → Pass/Fail/Insufficient.
-- Cite sources for each input (File + Page/Cell), using extractedData.trace or findings.evidencePointer.
-- Do not invent Tmin; if not provided, request it.`,
+### 6. DATA SOURCES & TRACEABILITY
+For each key value, cite: File Name + Page/Section
 
-    redline_notes: `You are a PV QA reviewer creating actionable redline notes.
+### 7. STRING CONFIGURATION ANALYSIS
+- Voc calculations with temperature coefficients
+- Comparison vs inverter max input voltage
+- Current calculations vs inverter limits
 
-Generate **Redline Notes** as a Markdown list.
+### 8. DETAILED FINDINGS (from Issue Register)
+Summary table with Issue ID, Severity, Standard, Action
 
-For EACH issue (from findings), include ALL fields:
-- File name
-- Page number / section / cell
-- Location on drawing/document
-- Current state (what is shown)
-- Required correction (exact edit)
-- Standard reference (clause)
+### 9. INDEPENDENT ENGINEER FINAL JUDGMENT
+Use deterministic language:
+- "The design is NOT SEC-approvable until Critical Issues are closed."
+- "The design is conditionally approvable subject to listed actions."
+- "The design is SEC-compliant."
 
-Rules:
-- Use findings.evidencePointer as primary source.
-- If a field is missing, write "INSUFFICIENT DATA" and specify what to provide.
-- Keep corrections as unambiguous markup instructions.`,
+NO vague conclusions allowed.`,
 
-    bom_boq: `You are a PV engineer preparing BoM/BoQ deliverables.
+    issue_register: `You are a SEC-compliant Independent Electrical Engineer.
 
-Generate an **Optimized BoM & BoQ** as Markdown tables.
+Generate an **Issue Register (NCR Log)** as Markdown for SEC design approval.
 
-Requirements:
-- Separate BoM and BoQ sections.
-- For each line item include: Category | Description | Qty | Unit | Specification | Source (File+Ref).
-- Use extractedData.bom / extractedData.boq when available.
-- Do not invent quantities/specs; if missing, list as "INSUFFICIENT DATA".`,
+## SEVERITY DEFINITIONS (SEC/WERA):
+- **CRITICAL (P0)**: SEC approval blocker, safety hazard, code violation
+- **MAJOR (P1)**: Must be corrected before energization, performance/warranty risk
+- **MINOR (P2)**: Editorial, documentation improvement, optimization
 
-    risk_reflection: `You are a PV engineering auditor writing a 1-page risk reflection on AI reliability.
+## REQUIRED TABLE FORMAT:
 
-Generate **Risk Reflection** as Markdown with these REQUIRED sections:
+| Issue ID | Severity | Title | Description | Location | Standard Reference | Evidence | Required Action | Verification Method |
+|----------|----------|-------|-------------|----------|-------------------|----------|-----------------|---------------------|
+| NCR-001 | CRITICAL | [Short title] | [Technical description] | [Drawing/Section] | [Standard Clause] | [File, Page] | [Exact correction] | [How to verify] |
 
-1) Confidence by data category (High/Medium/Low)
-   - String configuration
-   - Module parameters
-   - Inverter parameters
-   - Cable lengths/sizing
-   - BoM/BoQ
-   - Standards clause mapping
+## FOR EACH ISSUE INCLUDE:
+1. **Issue ID**: NCR-XXX format
+2. **Severity**: CRITICAL/MAJOR/MINOR with justification
+3. **Title**: Clear, specific issue name
+4. **Description**: Technical details with calculations if applicable
+5. **Location**: Exact location in drawings/documents
+6. **Standard Reference**: Specific clause (e.g., "IEC 62548 §7.2.1")
+7. **Evidence Pointer**: File name + page/section/cell
+8. **Required Action**: Specific, testable corrective action
+9. **Verification Method**: How to confirm resolution
 
-2) Data quality issues
-   - Missing fields (use extractedData.missingData)
-   - Low-quality sources (e.g., PDFs with no text)
+## RULES:
+- Use only findings from inputs
+- If evidence is missing, state "INSUFFICIENT DATA"
+- Keep actions specific and testable
+- Reference SEC/WERA/IEC clauses explicitly`,
 
-3) Human verification checklist
-   - Specific items an engineer must verify in drawings/datasheets
+    compliance_checklist: `You are a SEC-compliant Independent Electrical Engineer.
 
-4) AI limitations in this review
-   - Explicitly call out any unsupported file types / truncated text
+Generate a **Standards Compliance Checklist** as Markdown for SEC design approval submission.
 
-Rules:
-- Base confidence on presence/traceability of inputs (trace/evidencePointer).
-- If missingData is absent, state that limitation.
-`,
+## REQUIRED FORMAT:
+
+### APPLICABLE STANDARDS
+- SEC Distribution Code
+- WERA Grid Connection Requirements
+- IEC 62548 (PV Array Design)
+- IEC 62116 (Anti-Islanding)
+- IEC 60947 (Switchgear)
+- IEC 61643 (Surge Protection)
+- SASO Standards (Saudi)
+- SBC (Saudi Building Code)
+
+### COMPLIANCE MATRIX
+
+| # | Category | Requirement | Standard Clause | Evidence | Status | Notes |
+|---|----------|-------------|-----------------|----------|--------|-------|
+| 1 | Anti-Islanding | System shall disconnect within 2s | IEC 62116 §5.2 | [File/Page] | PASS/FAIL/N-A | |
+| 2 | Protection | MCCB breaking capacity ≥ Isc | IEC 60947-2 | [File/Page] | PASS/FAIL | |
+
+### CATEGORIES TO CHECK:
+1. Grid Connection Requirements (SEC/WERA)
+2. Anti-Islanding Protection
+3. Overcurrent Protection
+4. Overvoltage Protection
+5. Surge Protection
+6. Earthing & Bonding
+7. Cable Sizing & Installation
+8. String Configuration Limits
+9. Inverter Compliance
+10. Metering (if applicable)
+11. Safety Labeling
+12. Documentation Completeness
+
+## RULES:
+- Mark PASS only if evidence explicitly confirms compliance
+- Mark FAIL if non-conformance identified
+- Mark N/A with explanation if not applicable
+- Mark INSUFFICIENT DATA if cannot verify`,
+
+    recalculation_sheet: `You are a SEC-compliant Independent Electrical Engineer.
+
+Generate a **Recalculation Sheet** as Markdown with explicit engineering calculations for SEC approval.
+
+## REQUIRED CALCULATIONS (show ALL steps):
+
+### A) STRING VOLTAGE CALCULATIONS
+\`\`\`
+Given:
+  Voc_STC = [value from datasheet] V
+  Temp coefficient (γ) = [value]%/°C
+  T_min = [value]°C (lowest ambient)
+  Modules per string = [N]
+
+Voc at T_min:
+  Voc_cold = Voc_STC × [1 + γ × (T_min - 25)]
+  Voc_cold = [value] × [1 + [value] × ([T_min] - 25)]
+  Voc_cold = [result] V
+
+String Voc_cold = N × Voc_cold(module)
+  = [N] × [Voc_cold]
+  = [result] V
+
+Inverter Max DC Input = [value] V
+Check: [String Voc] < [Inverter Max] → PASS/FAIL
+\`\`\`
+
+### B) CURRENT CALCULATIONS
+\`\`\`
+Isc (module) = [value] A
+Imp (module) = [value] A
+Strings in parallel = [N]
+
+Total Isc = Isc × N_parallel = [value] × [N] = [result] A
+Total Imp = Imp × N_parallel = [value] × [N] = [result] A
+
+Inverter Max DC Current = [value] A
+Check: [Total current] < [Inverter Max] → PASS/FAIL
+\`\`\`
+
+### C) INVERTER COMPATIBILITY
+| Parameter | Design Value | Inverter Limit | Status |
+|-----------|--------------|----------------|--------|
+| String Voc (cold) | X V | Max Y V | PASS/FAIL |
+| String Vmp | X V | MPPT Y-Z V | PASS/FAIL |
+| Input Current | X A | Max Y A | PASS/FAIL |
+| DC:AC Ratio | X | Recommended ≤1.3 | PASS/FAIL |
+
+### D) CABLE SIZING VERIFICATION
+\`\`\`
+Cable: [type] [size] mm²
+Length: [L] m
+Current: [I] A
+ρ (resistivity): [value] Ω·mm²/m
+
+Voltage drop:
+  ΔV = (2 × L × I × ρ) / A
+  ΔV = (2 × [L] × [I] × [ρ]) / [A]
+  ΔV = [result] V
+  ΔV% = (ΔV / Vmp) × 100 = [result]%
+
+Limit: ≤3% (DC) / ≤2% (AC)
+Check: [ΔV%] < [Limit] → PASS/FAIL
+\`\`\`
+
+### E) PROTECTION DEVICE VERIFICATION
+\`\`\`
+Prospective fault current at PCC: [value] kA
+MCCB breaking capacity: [value] kA
+Check: Breaking capacity > Fault current → PASS/FAIL
+\`\`\`
+
+## RULES:
+- Show formula → inputs → substitution → result → verdict
+- Cite source for each input (File + Page/Cell)
+- Mark "INSUFFICIENT DATA" if values missing
+- Use actual numbers from extracted data`,
+
+    redline_notes: `You are a SEC-compliant Independent Electrical Engineer.
+
+Generate **Redline Notes** as Markdown – actionable markup corrections for design drawings.
+
+## FORMAT FOR EACH REDLINE:
+
+### REDLINE-XXX: [Short Title]
+
+| Field | Value |
+|-------|-------|
+| **File Name** | [Exact filename] |
+| **Page/Sheet** | [Page number or sheet ID] |
+| **Location on Drawing** | [e.g., "Zone B, String #3 label"] |
+| **Current State** | [What is currently shown/written] |
+| **Required Correction** | [Exact edit to make] |
+| **Standard Reference** | [e.g., "IEC 62548 §7.2.1"] |
+| **Priority** | CRITICAL / MAJOR / MINOR |
+
+---
+
+## EXAMPLE:
+
+### REDLINE-001: String Label Incorrect
+
+| Field | Value |
+|-------|-------|
+| **File Name** | Project_SLD.pdf |
+| **Page/Sheet** | Page 3, Sheet E-01 |
+| **Location on Drawing** | Combiner Box CB-1, String 3 |
+| **Current State** | Label shows "22 modules" |
+| **Required Correction** | Change to "20 modules" per recalculation |
+| **Standard Reference** | IEC 62548 §7.2.1 – Max string voltage |
+| **Priority** | CRITICAL |
+
+---
+
+## RULES:
+- One redline entry per issue
+- Use findings.evidencePointer as primary source
+- If location unknown, state "LOCATION TBD - Requires drawing review"
+- Keep corrections unambiguous (exact text/value changes)
+- Reference applicable SEC/IEC/SASO clause`,
+
+    bom_boq: `You are a SEC-compliant Independent Electrical Engineer.
+
+Generate an **Optimized BoM (Bill of Materials) & BoQ (Bill of Quantities)** as Markdown.
+
+## BILL OF MATERIALS (BoM)
+
+| # | Category | Item Description | Specification | Qty | Unit | Manufacturer | Model | Source Reference |
+|---|----------|------------------|---------------|-----|------|--------------|-------|------------------|
+| 1 | PV Modules | [Description] | [Pmax, Voc, Isc] | [N] | pcs | [Mfr] | [Model] | [File/Page] |
+| 2 | Inverters | [Description] | [Power, MPPT] | [N] | pcs | [Mfr] | [Model] | [File/Page] |
+| 3 | DC Cables | [Description] | [Size, Type] | [L] | m | [Mfr] | [Type] | [File/Page] |
+
+### CATEGORIES:
+1. PV Modules
+2. Inverters
+3. Mounting Structure
+4. DC Cables & Connectors
+5. AC Cables
+6. Protection Devices (MCCBs, Fuses, SPDs)
+7. Combiner Boxes
+8. Metering Equipment
+9. Earthing Materials
+10. Labeling & Signage
+
+## BILL OF QUANTITIES (BoQ)
+
+| # | Work Item | Description | Qty | Unit | Remarks |
+|---|-----------|-------------|-----|------|---------|
+| 1 | Module Installation | PV module mounting and connection | [N] | modules | |
+| 2 | Cable Installation | DC cable routing and termination | [L] | m | |
+
+## OPTIMIZATION NOTES
+- Any identified oversizing/undersizing
+- Cost optimization opportunities
+- Alternative specifications (if applicable)
+
+## RULES:
+- Use extractedData.bom / extractedData.boq when available
+- Do not invent quantities – mark "INSUFFICIENT DATA" if missing
+- Include source reference for each line item`,
+
+    risk_reflection: `You are a SEC-compliant Independent Electrical Engineer.
+
+Generate a **Risk Reflection** as Markdown – a 1-page AI reliability and data quality assessment.
+
+## REQUIRED SECTIONS:
+
+### 1. AI CONFIDENCE ASSESSMENT
+
+| Data Category | Confidence | Justification |
+|---------------|------------|---------------|
+| String Configuration | HIGH/MEDIUM/LOW | [Evidence basis] |
+| Module Parameters | HIGH/MEDIUM/LOW | [Evidence basis] |
+| Inverter Parameters | HIGH/MEDIUM/LOW | [Evidence basis] |
+| Cable Specifications | HIGH/MEDIUM/LOW | [Evidence basis] |
+| Protection Devices | HIGH/MEDIUM/LOW | [Evidence basis] |
+| Standards Compliance | HIGH/MEDIUM/LOW | [Evidence basis] |
+| BoM/BoQ | HIGH/MEDIUM/LOW | [Evidence basis] |
+
+**Confidence Definitions:**
+- HIGH: Direct evidence from uploaded documents with clear traceability
+- MEDIUM: Inferred from partial data or standard assumptions
+- LOW: Insufficient data, estimated, or not verifiable
+
+### 2. DATA QUALITY ISSUES
+
+**Missing Fields:**
+- [List specific missing data from extractedData.missingData]
+
+**Low-Quality Sources:**
+- [PDFs with no extractable text]
+- [Unsupported file types]
+- [Truncated or incomplete documents]
+
+**Data Conflicts:**
+- [Any contradictions between documents]
+
+### 3. HUMAN VERIFICATION CHECKLIST
+
+The following items MUST be verified by a qualified engineer:
+
+- [ ] String voltage calculations at site minimum temperature
+- [ ] Inverter MPPT range compatibility
+- [ ] Cable ampacity derating for installation conditions
+- [ ] Protection device coordination study
+- [ ] Earthing system resistance measurements
+- [ ] Anti-islanding test certificates
+- [ ] [Add specific items based on findings]
+
+### 4. AI LIMITATIONS IN THIS REVIEW
+
+| Limitation | Impact | Mitigation |
+|------------|--------|------------|
+| Cannot read DWG files natively | May miss drawing details | Request PDF exports |
+| Cannot perform dynamic simulations | No thermal/shade analysis | Recommend PVsyst review |
+| Standards database limited to uploaded | May miss amendments | Verify current versions |
+| Cannot verify site conditions | Assumes design accuracy | Site survey required |
+
+### 5. INDEPENDENT ENGINEER STATEMENT
+
+This AI-assisted review supplements but does not replace professional engineering judgment. The Independent Engineer must:
+1. Verify all AI-extracted data against original documents
+2. Confirm all calculations with independent tools
+3. Validate compliance with current SEC/WERA requirements
+4. Conduct physical site inspection before energization
+
+## RULES:
+- Base confidence on presence of traceable evidence
+- Be explicit about uncertainty
+- Do not overstate AI capabilities`,
   };
 
-  const userPrompt = `INPUTS (do not assume missing data):
+  const userPrompt = `INPUTS (treat missing data as failure):
 
-FINDINGS (${findings.length}):
+PROJECT ID: ${extractedData?.projectId || "Unknown"}
+
+## COMPLIANCE FINDINGS (${findings.length} issues)
 ${JSON.stringify(findings, null, 2)}
 
-EXTRACTED_DATA:
+## EXTRACTED DATA
 ${JSON.stringify(extractedData, null, 2)}
 
-OUTPUT:
-Generate the ${getDeliverableName(type)}. Use only the provided inputs, and include file/page/section/cell references wherever possible.`;
+## INSTRUCTIONS
+Generate the ${getDeliverableName(type)} following the SEC-compliant format exactly.
+- Use deterministic language (PASS/FAIL, not "appears to" or "seems")
+- Include file/page references for every claim
+- Mark "INSUFFICIENT DATA" for anything not verifiable
+- This is a regulatory submission document`;
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",
@@ -323,8 +596,8 @@ Generate the ${getDeliverableName(type)}. Use only the provided inputs, and incl
         { role: "system", content: systemPrompts[type] },
         { role: "user", content: userPrompt },
       ],
-      temperature: 0.2,
-      max_completion_tokens: 4000,
+      temperature: 0.1,
+      max_completion_tokens: 6000,
     }),
   });
 
