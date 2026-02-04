@@ -5,7 +5,7 @@ import { getDocument } from "https://esm.sh/pdfjs-serverless@0.3.2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 type RequestBody = {
@@ -19,12 +19,12 @@ const json = (body: unknown, status = 200) =>
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 
-async function extractPdfText(data: Uint8Array): Promise<string> {
+async function extractPdfText(data: Uint8Array, maxPages = 20): Promise<string> {
   try {
     const doc = await getDocument({ data, useSystemFonts: true }).promise;
-    const maxPages = Math.min(doc.numPages, 50);
+    const pagesToRead = Math.min(doc.numPages, maxPages);
     const chunks: string[] = [];
-    for (let i = 1; i <= maxPages; i++) {
+    for (let i = 1; i <= pagesToRead; i++) {
       const page = await doc.getPage(i);
       const textContent = await page.getTextContent();
       const pageText = (textContent.items as any[])
@@ -41,54 +41,40 @@ async function extractPdfText(data: Uint8Array): Promise<string> {
   }
 }
 
-serve(async (req) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+async function processExtractionJob(
+  jobId: string,
+  projectId: string,
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  lovableApiKey: string
+) {
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) return json({ error: "Missing authorization header" }, 401);
+    // Update job to processing
+    await supabase
+      .from("processing_jobs")
+      .update({ status: "processing", progress: 10 })
+      .eq("id", jobId);
 
-    const token = authHeader.replace("Bearer ", "").trim();
-    if (!token) return json({ error: "Missing bearer token" }, 401);
-
-    const { projectId } = (await req.json()) as RequestBody;
-    if (!projectId) return json({ error: "Missing projectId" }, 400);
-
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
-    if (!SUPABASE_URL) return json({ error: "SUPABASE_URL is not configured" }, 500);
-
-    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-    if (!SUPABASE_SERVICE_ROLE_KEY) return json({ error: "SUPABASE_SERVICE_ROLE_KEY is not configured" }, 500);
-
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) return json({ error: "AI service not configured" }, 500);
-
-    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
-
-    // Verify user and project ownership
-    const { data: userRes, error: userErr } = await supabase.auth.getUser(token);
-    const user = userRes?.user;
-    if (userErr || !user) return json({ error: "Unauthorized" }, 401);
-
-    const { data: project, error: projectErr } = await supabase
-      .from("projects")
-      .select("id,user_id")
-      .eq("id", projectId)
-      .maybeSingle();
-
-    if (projectErr) return json({ error: `Failed to load project: ${projectErr.message}` }, 500);
-    if (!project) return json({ error: "Project not found" }, 404);
-    if (project.user_id !== user.id) return json({ error: "Forbidden" }, 403);
-
+    // Load project files
     const { data: projectFiles, error: filesErr } = await supabase
       .from("project_files")
       .select("name,file_type,storage_path,size")
       .eq("project_id", projectId)
       .order("uploaded_at", { ascending: true });
 
-    if (filesErr) return json({ error: `Failed to load project files: ${filesErr.message}` }, 500);
-    if (!projectFiles || projectFiles.length === 0) return json({ error: "No project files found" }, 400);
+    if (filesErr || !projectFiles || projectFiles.length === 0) {
+      await supabase.from("processing_jobs").update({
+        status: "failed",
+        error: "No project files found",
+      }).eq("id", jobId);
+      return;
+    }
 
+    await supabase.from("processing_jobs").update({ progress: 20 }).eq("id", jobId);
+
+    // Extract text from files (limit to avoid CPU timeout)
     const fileContexts: Array<{
       name: string;
       type: string;
@@ -97,7 +83,7 @@ serve(async (req) => {
       extractionStatus: "ok" | "no_text" | "unsupported" | "download_failed";
     }> = [];
 
-    for (const f of projectFiles) {
+    for (const f of projectFiles.slice(0, 5)) { // Limit to 5 files
       const name = String(f.name ?? "unknown");
       const type = String(f.file_type ?? "unknown");
       const size = Number(f.size ?? 0);
@@ -118,7 +104,7 @@ serve(async (req) => {
       const buf = new Uint8Array(await blob.arrayBuffer());
 
       if (type === "pdf") {
-        const text = await extractPdfText(buf);
+        const text = await extractPdfText(buf, 15); // Limit to 15 pages
         fileContexts.push({
           name,
           type,
@@ -145,9 +131,11 @@ serve(async (req) => {
       }
     }
 
+    await supabase.from("processing_jobs").update({ progress: 50 }).eq("id", jobId);
+
     const totalTextChars = fileContexts.reduce((acc, f) => acc + (f.extractedText?.length ?? 0), 0);
 
-    // Enhanced system prompt with comprehensive extraction instructions
+    // Build prompt
     const systemPrompt = `You are GPT-5.2, acting as a senior PV design engineer conducting a comprehensive design review and data extraction.
 
 CRITICAL GOVERNANCE RULES:
@@ -157,81 +145,20 @@ CRITICAL GOVERNANCE RULES:
 4. Perform engineering calculations where applicable based on international standards (IEC 60364, IEC 62446, IEC 61215).
 
 EXTRACTION TASKS:
-
-1. **PV SYSTEM PARAMETERS** - Extract with full detail:
-   - moduleCount: Total number of PV modules
-   - inverterCount: Number of inverters
-   - stringCount: Calculate from (total modules / modules per string) OR extract if stated
-   - arrayCount: Number of PV arrays or sub-arrays
-   - modulesPerString: How many modules in each string
-   - totalCapacity: DC capacity in kWp (moduleCount × module Wp / 1000)
-   - acCapacity: Total AC inverter capacity in kW
-
-2. **MAX DC VOLTAGE CALCULATION** (per IEC 62548 / NEC 690):
-   - Extract module Voc from datasheet
-   - Apply temperature correction: Voc_max = Voc_stc × [1 + (Tmin - 25) × TempCoef_Voc / 100]
-   - Multiply by modules per string: String_Voc_max = Voc_max × modules_per_string
-   - If Tmin not available, use -10°C for Saudi Arabia / hot climates, -40°C for cold climates
-   - Return the calculated maxDcVoltage and show the formula used
-
-3. **CABLE LENGTHS** - Return in METERS (convert from any unit found):
-   - dcCableLength: Total DC cable length in meters
-   - acCableLength: Total AC cable length in meters
-   - If lengths given in km, multiply by 1000
-   - If not found, set to null and explain in missingData
-
-4. **INVERTER SPECIFICATIONS** - For each inverter type found:
-   - model: Manufacturer and model
-   - ratedPower: AC power rating in kW
-   - maxDcVoltage: Maximum DC input voltage
-   - mpptVoltageMin: MPPT minimum voltage
-   - mpptVoltageMax: MPPT maximum voltage
-   - maxInputCurrent: Maximum DC input current per MPPT
-   - mpptCount: Number of MPPT channels
-   - quantity: How many of this inverter type
-
-5. **MODULE SPECIFICATIONS** - Extract:
-   - model: Manufacturer and model
-   - pmax: Peak power in Wp
-   - voc: Open circuit voltage
-   - vmp: Maximum power voltage
-   - isc: Short circuit current
-   - imp: Maximum power current
-   - tempCoeffVoc: Temperature coefficient of Voc (%/°C)
-   - tempCoeffPmax: Temperature coefficient of Pmax (%/°C)
-
-6. **BILL OF MATERIALS (BoM)** - List all equipment with:
-   - category: Equipment category (Modules, Inverters, Cables, Switchgear, Protection, Mounting, etc.)
-   - description: Item description
-   - quantity: Count (null if not determinable)
-   - unit: Unit of measure (ea, m, set, etc.)
-   - specification: Technical specs as found
-   - source: { sourceFile, sourceReference }
-
-7. **BILL OF QUANTITIES (BoQ)** - Measured quantities:
-   - System capacities (kWp, kW)
-   - Cable lengths and sizes
-   - Number of strings, arrays
-   - Any other measurable quantities
-
-8. **DRAWING LAYERS** - If CAD layer names are visible, list them
-
-9. **TEXT LABELS** - Extract significant equipment labels, panel names, cable tags
-
-10. **MISSING DATA** - For each field that cannot be extracted:
-    - field: The parameter name
-    - reason: Why it couldn't be extracted
-    - sourceHint: What document/input would provide this data
-
-11. **ENGINEERING NOTES** - Add observations about:
-    - Document type (SLD, layout, datasheet, etc.)
-    - Data quality observations
-    - Potential compliance concerns noticed
+1. **PV SYSTEM PARAMETERS**: moduleCount, inverterCount, stringCount, arrayCount, modulesPerString, totalCapacity (kWp), acCapacity (kW)
+2. **MAX DC VOLTAGE CALCULATION** (per IEC 62548): Voc_max = Voc_stc × [1 + (Tmin - 25) × TempCoef_Voc / 100] × modules_per_string
+3. **CABLE LENGTHS**: Return in METERS (convert from km if needed)
+4. **INVERTER SPECIFICATIONS**: model, ratedPower, maxDcVoltage, mpptVoltageMin/Max, maxInputCurrent, mpptCount, quantity
+5. **MODULE SPECIFICATIONS**: model, pmax, voc, vmp, isc, imp, tempCoeffVoc, tempCoeffPmax
+6. **BILL OF MATERIALS (BoM)**: List all equipment with category, description, quantity, unit, specification, source
+7. **BILL OF QUANTITIES (BoQ)**: Measured quantities
+8. **DRAWING LAYERS**: If CAD layer names are visible
+9. **TEXT LABELS**: Significant equipment labels
+10. **MISSING DATA**: For each field that cannot be extracted
 
 Return all data using the extract_pv_data tool.`;
 
-    // Limit per-file text so prompts don't explode
-    const MAX_PER_FILE = 80_000;
+    const MAX_PER_FILE = 40000; // Reduced to avoid timeout
     const filesForPrompt = fileContexts
       .map((f) => {
         const clipped = (f.extractedText || "").slice(0, MAX_PER_FILE);
@@ -241,6 +168,8 @@ Return all data using the extract_pv_data tool.`;
       .join("\n\n");
 
     const userPrompt = `PROJECT FILES (${projectFiles.length})\nTotal extracted text characters: ${totalTextChars}\n\n${filesForPrompt}\n\nAnalyze all files and extract comprehensive PV system data. Calculate max DC voltage if module specs are available. All cable lengths must be in METERS.`;
+
+    await supabase.from("processing_jobs").update({ progress: 60 }).eq("id", jobId);
 
     const body: any = {
       model: "openai/gpt-5.2",
@@ -264,8 +193,8 @@ Return all data using the extract_pv_data tool.`;
                   properties: {
                     dcLength: { type: ["number", "null"], description: "DC cable length in meters" },
                     acLength: { type: ["number", "null"], description: "AC cable length in meters" },
-                    dcCableSpec: { type: ["string", "null"], description: "DC cable specification" },
-                    acCableSpec: { type: ["string", "null"], description: "AC cable specification" },
+                    dcCableSpec: { type: ["string", "null"] },
+                    acCableSpec: { type: ["string", "null"] },
                   },
                   required: ["dcLength", "acLength"],
                   additionalProperties: false,
@@ -275,13 +204,13 @@ Return all data using the extract_pv_data tool.`;
                   properties: {
                     moduleCount: { type: ["number", "null"] },
                     inverterCount: { type: ["number", "null"] },
-                    stringCount: { type: ["number", "null"], description: "Number of strings (calculated or extracted)" },
+                    stringCount: { type: ["number", "null"] },
                     arrayCount: { type: ["number", "null"] },
-                    modulesPerString: { type: ["number", "null"], description: "Modules per string" },
-                    maxVoltage: { type: ["number", "null"], description: "Max DC voltage in V (calculated per IEC standards)" },
-                    maxVoltageCalculation: { type: ["string", "null"], description: "Formula used for max voltage calculation" },
-                    totalCapacity: { type: ["number", "null"], description: "DC capacity in kWp" },
-                    acCapacity: { type: ["number", "null"], description: "AC capacity in kW" },
+                    modulesPerString: { type: ["number", "null"] },
+                    maxVoltage: { type: ["number", "null"] },
+                    maxVoltageCalculation: { type: ["string", "null"] },
+                    totalCapacity: { type: ["number", "null"] },
+                    acCapacity: { type: ["number", "null"] },
                   },
                   required: ["moduleCount", "inverterCount", "stringCount", "maxVoltage", "totalCapacity"],
                   additionalProperties: false,
@@ -293,22 +222,13 @@ Return all data using the extract_pv_data tool.`;
                     properties: {
                       model: { type: ["string", "null"] },
                       manufacturer: { type: ["string", "null"] },
-                      ratedPower: { type: ["number", "null"], description: "AC power in kW" },
+                      ratedPower: { type: ["number", "null"] },
                       maxDcVoltage: { type: ["number", "null"] },
                       mpptVoltageMin: { type: ["number", "null"] },
                       mpptVoltageMax: { type: ["number", "null"] },
                       maxInputCurrent: { type: ["number", "null"] },
                       mpptCount: { type: ["number", "null"] },
                       quantity: { type: ["number", "null"] },
-                      source: {
-                        type: "object",
-                        properties: {
-                          sourceFile: { type: "string" },
-                          sourceReference: { type: "string" },
-                        },
-                        required: ["sourceFile", "sourceReference"],
-                        additionalProperties: false,
-                      },
                     },
                     required: ["ratedPower", "quantity"],
                     additionalProperties: false,
@@ -319,22 +239,13 @@ Return all data using the extract_pv_data tool.`;
                   properties: {
                     model: { type: ["string", "null"] },
                     manufacturer: { type: ["string", "null"] },
-                    pmax: { type: ["number", "null"], description: "Peak power in Wp" },
-                    voc: { type: ["number", "null"], description: "Open circuit voltage" },
-                    vmp: { type: ["number", "null"], description: "Max power voltage" },
-                    isc: { type: ["number", "null"], description: "Short circuit current" },
-                    imp: { type: ["number", "null"], description: "Max power current" },
-                    tempCoeffVoc: { type: ["number", "null"], description: "Temp coeff Voc in %/°C" },
-                    tempCoeffPmax: { type: ["number", "null"], description: "Temp coeff Pmax in %/°C" },
-                    source: {
-                      type: "object",
-                      properties: {
-                        sourceFile: { type: "string" },
-                        sourceReference: { type: "string" },
-                      },
-                      required: ["sourceFile", "sourceReference"],
-                      additionalProperties: false,
-                    },
+                    pmax: { type: ["number", "null"] },
+                    voc: { type: ["number", "null"] },
+                    vmp: { type: ["number", "null"] },
+                    isc: { type: ["number", "null"] },
+                    imp: { type: ["number", "null"] },
+                    tempCoeffVoc: { type: ["number", "null"] },
+                    tempCoeffPmax: { type: ["number", "null"] },
                   },
                   additionalProperties: false,
                 },
@@ -348,16 +259,6 @@ Return all data using the extract_pv_data tool.`;
                       quantity: { type: ["number", "null"] },
                       unit: { type: "string" },
                       specification: { type: "string" },
-                      source: {
-                        type: "object",
-                        properties: {
-                          sourceFile: { type: "string" },
-                          sourceReference: { type: "string" },
-                        },
-                        required: ["sourceFile", "sourceReference"],
-                        additionalProperties: false,
-                      },
-                      notes: { type: "string" },
                     },
                     required: ["category", "description", "quantity", "unit"],
                     additionalProperties: false,
@@ -372,17 +273,6 @@ Return all data using the extract_pv_data tool.`;
                       description: { type: "string" },
                       quantity: { type: ["number", "null"] },
                       unit: { type: "string" },
-                      specification: { type: "string" },
-                      source: {
-                        type: "object",
-                        properties: {
-                          sourceFile: { type: "string" },
-                          sourceReference: { type: "string" },
-                        },
-                        required: ["sourceFile", "sourceReference"],
-                        additionalProperties: false,
-                      },
-                      notes: { type: "string" },
                     },
                     required: ["category", "description", "quantity", "unit"],
                     additionalProperties: false,
@@ -425,40 +315,61 @@ Return all data using the extract_pv_data tool.`;
       ],
       tool_choice: { type: "function", function: { name: "extract_pv_data" } },
       temperature: 0.1,
-      max_completion_tokens: 8000,
+      max_completion_tokens: 6000,
     };
 
     const resp = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
+        Authorization: `Bearer ${lovableApiKey}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
     });
 
+    await supabase.from("processing_jobs").update({ progress: 85 }).eq("id", jobId);
+
     if (!resp.ok) {
       const text = await resp.text();
-      if (resp.status === 429) return json({ error: "Rate limit exceeded. Please try again later." }, 429);
-      if (resp.status === 402) return json({ error: "AI credits exhausted. Please add credits to continue." }, 402);
       console.error("AI gateway error:", resp.status, text);
-      return json({ error: `AI gateway error: ${resp.status}` }, 500);
+      await supabase.from("processing_jobs").update({
+        status: "failed",
+        error: resp.status === 429 
+          ? "Rate limit exceeded. Please try again later."
+          : resp.status === 402
+          ? "AI credits exhausted. Please add credits."
+          : `AI gateway error: ${resp.status}`,
+      }).eq("id", jobId);
+      return;
     }
 
     const aiResult = await resp.json();
     const toolCall = aiResult.choices?.[0]?.message?.tool_calls?.[0];
     const argsStr = toolCall?.function?.arguments;
-    if (!argsStr) return json({ error: "Empty AI response" }, 500);
+
+    if (!argsStr) {
+      await supabase.from("processing_jobs").update({
+        status: "failed",
+        error: "Empty AI response",
+      }).eq("id", jobId);
+      return;
+    }
 
     let extractedData: any;
     try {
       extractedData = JSON.parse(argsStr);
     } catch (e) {
       console.error("Failed to parse tool arguments:", e);
-      return json({ error: "Invalid AI response format" }, 500);
+      await supabase.from("processing_jobs").update({
+        status: "failed",
+        error: "Invalid AI response format",
+      }).eq("id", jobId);
+      return;
     }
 
-    // Persist to extracted_data table (best-effort)
+    await supabase.from("processing_jobs").update({ progress: 95 }).eq("id", jobId);
+
+    // Persist to extracted_data table
     try {
       const payload = {
         project_id: projectId,
@@ -502,13 +413,104 @@ Return all data using the extract_pv_data tool.`;
       console.error("Persist ai_prompt_logs failed:", logErr);
     }
 
+    // Complete the job
+    await supabase.from("processing_jobs").update({
+      status: "completed",
+      progress: 100,
+      result: {
+        success: true,
+        projectId,
+        extractedData,
+        model: "openai/gpt-5.2",
+        timestamp: new Date().toISOString(),
+      },
+    }).eq("id", jobId);
+
+  } catch (error) {
+    console.error("Background extraction error:", error);
+    await supabase.from("processing_jobs").update({
+      status: "failed",
+      error: error instanceof Error ? error.message : "Extraction failed",
+    }).eq("id", jobId);
+  }
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+
+  try {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) return json({ error: "Missing authorization header" }, 401);
+
+    const token = authHeader.replace("Bearer ", "").trim();
+    if (!token) return json({ error: "Missing bearer token" }, 401);
+
+    const { projectId } = (await req.json()) as RequestBody;
+    if (!projectId) return json({ error: "Missing projectId" }, 400);
+
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    if (!SUPABASE_URL) return json({ error: "SUPABASE_URL is not configured" }, 500);
+
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!SUPABASE_SERVICE_ROLE_KEY) return json({ error: "SUPABASE_SERVICE_ROLE_KEY is not configured" }, 500);
+
+    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
+    if (!LOVABLE_API_KEY) return json({ error: "AI service not configured" }, 500);
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // Verify user and project ownership
+    const { data: userRes, error: userErr } = await supabase.auth.getUser(token);
+    const user = userRes?.user;
+    if (userErr || !user) return json({ error: "Unauthorized" }, 401);
+
+    const { data: project, error: projectErr } = await supabase
+      .from("projects")
+      .select("id,user_id")
+      .eq("id", projectId)
+      .maybeSingle();
+
+    if (projectErr) return json({ error: `Failed to load project: ${projectErr.message}` }, 500);
+    if (!project) return json({ error: "Project not found" }, 404);
+    if (project.user_id !== user.id) return json({ error: "Forbidden" }, 403);
+
+    // Create a job record immediately
+    const { data: job, error: jobError } = await supabase
+      .from("processing_jobs")
+      .insert({
+        project_id: projectId,
+        user_id: user.id,
+        job_type: "extraction",
+        status: "pending",
+        progress: 0,
+      })
+      .select()
+      .single();
+
+    if (jobError || !job) {
+      console.error("Failed to create job:", jobError);
+      return json({ error: "Failed to create processing job" }, 500);
+    }
+
+    // Start background processing
+    // @ts-ignore - EdgeRuntime is available in Supabase Edge Functions
+    EdgeRuntime.waitUntil(
+      processExtractionJob(
+        job.id,
+        projectId,
+        SUPABASE_URL,
+        SUPABASE_SERVICE_ROLE_KEY,
+        LOVABLE_API_KEY
+      )
+    );
+
+    // Return immediately with job ID
     return json({
-      success: true,
-      projectId,
-      extractedData,
-      model: "openai/gpt-5.2",
-      timestamp: new Date().toISOString(),
+      jobId: job.id,
+      status: "pending",
+      message: "Data extraction started. Poll for results.",
     });
+
   } catch (error) {
     console.error("Extract data error:", error);
     return json({ error: error instanceof Error ? error.message : "Unknown error" }, 500);

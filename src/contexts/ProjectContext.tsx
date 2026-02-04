@@ -47,6 +47,36 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
 
+  // Poll for job completion
+  const pollJobStatus = async (
+    supabase: any,
+    jobId: string,
+    maxAttempts = 90,
+    interval = 2000
+  ): Promise<any> => {
+    let attempts = 0;
+    while (attempts < maxAttempts) {
+      attempts++;
+      const { data, error } = await supabase
+        .from("processing_jobs")
+        .select("status, progress, result, error")
+        .eq("id", jobId)
+        .single();
+
+      if (error) throw new Error("Failed to poll job status");
+
+      if (data.status === "completed") {
+        return data.result;
+      }
+      if (data.status === "failed") {
+        throw new Error(data.error || "Job failed");
+      }
+
+      await new Promise((r) => setTimeout(r, interval));
+    }
+    throw new Error("Job timed out");
+  };
+
   // Real compliance review function that calls edge function
   const runComplianceReview = async (projectFiles: { name: string; content: string }[]) => {
     if (!currentProject) return;
@@ -76,11 +106,18 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       if (error) throw error;
 
       if (data.error) {
-        // Surface the backend reason to the UI (e.g. no standards uploaded)
         throw new Error(data.error);
-      } else if (data.findings && data.findings.length > 0) {
+      }
+
+      // If we got a jobId, poll for results
+      let resultData = data;
+      if (data.jobId) {
+        resultData = await pollJobStatus(supabase, data.jobId);
+      }
+
+      if (resultData.findings && resultData.findings.length > 0) {
         // Map the AI findings to our type
-        const mappedFindings: ComplianceFinding[] = data.findings.map((f: any, idx: number) => ({
+        const mappedFindings: ComplianceFinding[] = resultData.findings.map((f: any, idx: number) => ({
           id: `finding-${idx}`,
           issueId: f.issueId || `NCR-${String(idx + 1).padStart(3, '0')}`,
           name: f.name || 'Unnamed Finding',
@@ -97,19 +134,13 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }));
         setFindings(mappedFindings);
         
-        // Create submission - use AI's compliance percentage if available
-        // Otherwise calculate: issues count vs total checks
+        // Create submission
         const passCount = mappedFindings.filter(f => f.severity === 'pass').length;
-        const issueCount = mappedFindings.filter(f => f.severity !== 'pass').length;
         const totalChecks = mappedFindings.length;
-        
-        // Compliance % = percentage of checks that passed (not issues)
         const calculatedCompliance = totalChecks > 0 
           ? Math.round((passCount / totalChecks) * 100) 
           : 100;
-        
-        // Prefer AI-provided percentage, fallback to calculated
-        const compliancePercentage = data.compliancePercentage ?? calculatedCompliance;
+        const compliancePercentage = resultData.compliancePercentage ?? calculatedCompliance;
         
         const newSubmission: Submission = {
           id: `SUB-${Date.now()}`,
@@ -122,15 +153,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         };
         addSubmission(newSubmission);
       } else {
-        // No findings returned - set empty state, don't use mock data
         setFindings([]);
         console.warn('No compliance findings returned from AI analysis');
       }
     } catch (err) {
       console.error('Compliance review error:', err);
-      // Don't use mock data - show error state instead
       setFindings([]);
-      // Throw error so UI can handle it
       throw err instanceof Error ? err : new Error('Compliance analysis failed. Please try again.');
     } finally {
       setIsReviewing(false);

@@ -230,6 +230,53 @@ export type Database = {
           },
         ]
       }
+      processing_jobs: {
+        Row: {
+          created_at: string
+          error: string | null
+          id: string
+          job_type: string
+          progress: number | null
+          project_id: string
+          result: Json | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          error?: string | null
+          id?: string
+          job_type: string
+          progress?: number | null
+          project_id: string
+          result?: Json | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          error?: string | null
+          id?: string
+          job_type?: string
+          progress?: number | null
+          project_id?: string
+          result?: Json | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "processing_jobs_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       project_files: {
         Row: {
           file_type: Database["public"]["Enums"]["file_type"]
