@@ -99,21 +99,35 @@ const AnalyzeExtract: React.FC = () => {
       setAnalysisSteps(prev => ({ ...prev, pvCalculation: true }));
       setAnalysisProgress(90);
 
-      // Map GPT response to ExtractedData format
+      // Map GPT response to ExtractedData format - handle both value-wrapped and direct formats
       const aiData = data?.extractedData || {};
+      
+      // Helper to extract value from wrapped or direct format
+      const getValue = (field: any, defaultVal: any = 'NOT_FOUND') => {
+        if (field === undefined || field === null) return defaultVal;
+        if (typeof field === 'object' && 'value' in field) {
+          return field.value === 'NOT_FOUND' ? defaultVal : field.value;
+        }
+        return field;
+      };
+
       const extracted: ExtractedData = {
-        layers: aiData.layers || ['PV_MODULES', 'DC_CABLES', 'AC_CABLES', 'INVERTERS', 'GROUNDING', 'ANNOTATIONS'],
-        textLabels: aiData.textLabels || [],
+        layers: Array.isArray(aiData.layers) 
+          ? aiData.layers.map((l: any) => getValue(l, '')).filter((l: string) => l && l !== 'NOT_FOUND')
+          : ['PV_MODULES', 'DC_CABLES', 'AC_CABLES', 'INVERTERS', 'GROUNDING', 'ANNOTATIONS'],
+        textLabels: Array.isArray(aiData.textLabels) 
+          ? aiData.textLabels.map((t: any) => getValue(t, '')).filter((t: string) => t && t !== 'NOT_FOUND')
+          : [],
         cableSummary: {
-          dcLength: aiData.cableSummary?.dcLength || 0,
-          acLength: aiData.cableSummary?.acLength || 0
+          dcLength: Number(getValue(aiData.cableSummary?.dcLength, 0)) || 0,
+          acLength: Number(getValue(aiData.cableSummary?.acLength, 0)) || 0
         },
         pvParameters: {
-          moduleCount: aiData.pvParameters?.moduleCount || 0,
-          inverterCount: aiData.pvParameters?.inverterCount || 0,
-          stringCount: aiData.pvParameters?.stringCount || 0,
-          maxVoltage: aiData.pvParameters?.maxVoltage || 1500,
-          totalCapacity: aiData.pvParameters?.totalCapacity || 0
+          moduleCount: Number(getValue(aiData.pvParameters?.moduleCount, 0)) || 0,
+          inverterCount: Number(getValue(aiData.pvParameters?.inverterCount, 0)) || 0,
+          stringCount: Number(getValue(aiData.pvParameters?.stringCount, 0)) || 0,
+          maxVoltage: Number(getValue(aiData.pvParameters?.maxVoltage, 1500)) || 1500,
+          totalCapacity: Number(getValue(aiData.pvParameters?.totalCapacity, 0)) || 0
         }
       };
 
