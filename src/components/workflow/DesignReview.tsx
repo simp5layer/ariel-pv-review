@@ -53,18 +53,51 @@ const DesignReview: React.FC = () => {
     findings,
     submissions,
     isReviewing,
-    setIsReviewing
+    setIsReviewing,
+    currentProject,
+    extractedData,
+    runComplianceReview
   } = useProject();
 
   const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
   const [isGeneratingDeliverables, setIsGeneratingDeliverables] = useState(false);
 
-  const handleRunReview = () => {
-    setIsReviewing(true);
-    // Deliverables will be partially generated after review completes
+  const handleRunReview = async () => {
+    // Build project file content from extracted data for AI analysis
+    const projectFiles: { name: string; content: string }[] = [];
+    
+    // Add extracted data as structured content
+    if (extractedData) {
+      projectFiles.push({
+        name: 'extracted_data.json',
+        content: JSON.stringify(extractedData, null, 2)
+      });
+    }
+    
+    // Add file list as context
+    if (currentProject?.files && currentProject.files.length > 0) {
+      const fileList = currentProject.files.map(f => `- ${f.name} (${f.type}, ${(f.size / 1024).toFixed(1)} KB)`).join('\n');
+      projectFiles.push({
+        name: 'project_files_list.txt',
+        content: `Project Files:\n${fileList}\n\nProject: ${currentProject.name}\nLocation: ${currentProject.location}\nSystem Type: ${currentProject.systemType}`
+      });
+    }
+    
+    // If we have no files, add placeholder
+    if (projectFiles.length === 0) {
+      projectFiles.push({
+        name: 'project_summary.txt',
+        content: `Project: ${currentProject?.name || 'Unknown'}\nLocation: ${currentProject?.location || 'Unknown'}\nNo extracted data available yet.`
+      });
+    }
+
+    // Run real compliance analysis
+    await runComplianceReview(projectFiles);
+    
+    // Generate deliverables after review completes
     setTimeout(() => {
       setDeliverables(createMockDeliverables(submissions.length + 1));
-    }, 4500);
+    }, 500);
   };
 
   const handleGenerateMissing = () => {

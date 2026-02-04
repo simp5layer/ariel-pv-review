@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -10,76 +10,84 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import FileUploadZone from '@/components/ui/FileUploadZone';
-import { StandardDocument, UploadedFile } from '@/types/project';
+import { useStandardsLibrary } from '@/hooks/useStandardsLibrary';
 import { 
   Book, 
   ArrowLeft, 
   Trash2, 
   Shield, 
   FileText, 
-  Search
+  Search,
+  Upload,
+  Loader2
 } from 'lucide-react';
 import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 
 interface StandardsLibraryProps {
   onBack: () => void;
 }
 
 const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
-  const [standards, setStandards] = useState<StandardDocument[]>([
-    // Demo data
-    {
-      id: 'std-1',
-      name: 'IEC 62548:2016 - PV Arrays Design Requirements',
-      version: '2016',
-      category: 'IEC',
-      uploadedAt: new Date('2024-01-10'),
-      file: { id: 'f1', name: 'IEC_62548_2016.pdf', type: 'pdf', size: 2500000, uploadedAt: new Date(), status: 'completed' },
-      isGlobal: true
-    },
-    {
-      id: 'std-2',
-      name: 'SEC Distribution Code - PV Connection Standards',
-      version: '2023',
-      category: 'SEC',
-      uploadedAt: new Date('2024-01-15'),
-      file: { id: 'f2', name: 'SEC_Distribution_Code.pdf', type: 'pdf', size: 3200000, uploadedAt: new Date(), status: 'completed' },
-      isGlobal: true
-    },
-    {
-      id: 'std-3',
-      name: 'SBC 401 - Electrical Systems Requirements',
-      version: '2022',
-      category: 'SBC',
-      uploadedAt: new Date('2024-02-01'),
-      file: { id: 'f3', name: 'SBC_401_Electrical.pdf', type: 'pdf', size: 1800000, uploadedAt: new Date(), status: 'completed' },
-      isGlobal: true
-    }
-  ]);
-  
+  const { standards, isLoading, isUploading, uploadStandards, deleteStandard } = useStandardsLibrary();
   const [searchQuery, setSearchQuery] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFilesAdded = (files: UploadedFile[]) => {
-    const newStandards: StandardDocument[] = files.map((file, index) => ({
-      id: `std-${Date.now()}-${index}`,
-      name: file.name.replace(/\.[^/.]+$/, ''), // Use filename without extension as name
-      category: 'OTHER' as StandardDocument['category'],
-      uploadedAt: new Date(),
-      file: { ...file, type: 'pdf' as const },
-      isGlobal: true
-    }));
-    setStandards([...standards, ...newStandards]);
+  const handleFilesSelected = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    
+    const pdfFiles = Array.from(files).filter(f => 
+      f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
+    );
+    
+    if (pdfFiles.length === 0) {
+      return;
+    }
+
+    await uploadStandards(pdfFiles);
+    
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
-  const handleDeleteStandard = (id: string) => {
-    setStandards(standards.filter(s => s.id !== id));
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    handleFilesSelected(e.dataTransfer.files);
+  };
+
+  const handleDeleteStandard = async (id: string) => {
+    await deleteStandard(id);
   };
 
   const filteredStandards = standards.filter(s => 
     s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    s.file.name.toLowerCase().includes(searchQuery.toLowerCase())
+    s.fileName.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  if (isLoading) {
+    return (
+      <div className="min-h-full bg-background py-8 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading standards library...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-full bg-background py-8">
@@ -123,12 +131,48 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <FileUploadZone
-              onFilesAdded={handleFilesAdded}
-              acceptedTypes={['.pdf']}
-              label="Upload standard documents"
-              description="PDF files only - drag and drop or click to browse"
-            />
+            <div
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+              className={cn(
+                "relative border-2 border-dashed rounded-lg p-8 text-center transition-all duration-200",
+                isDragging 
+                  ? "border-primary bg-primary/5" 
+                  : "border-border hover:border-primary/50 hover:bg-muted/50",
+                isUploading && "opacity-50 pointer-events-none"
+              )}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept=".pdf"
+                onChange={(e) => handleFilesSelected(e.target.files)}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                disabled={isUploading}
+              />
+              <div className="flex flex-col items-center gap-3">
+                <div className={cn(
+                  "w-14 h-14 rounded-full flex items-center justify-center transition-colors",
+                  isDragging ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                )}>
+                  {isUploading ? (
+                    <Loader2 className="w-7 h-7 animate-spin" />
+                  ) : (
+                    <Upload className="w-7 h-7" />
+                  )}
+                </div>
+                <div>
+                  <p className="text-base font-medium text-foreground">
+                    {isUploading ? 'Uploading...' : 'Upload standard documents'}
+                  </p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    PDF files only - drag and drop or click to browse
+                  </p>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -165,14 +209,14 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
                       <TableCell>
                         <div className="flex items-center gap-3">
                           <FileText className="w-4 h-4 text-primary" />
-                          <span className="font-medium">{standard.file.name}</span>
+                          <span className="font-medium">{standard.fileName}</span>
                         </div>
                       </TableCell>
                       <TableCell className="text-muted-foreground text-sm">
                         {format(standard.uploadedAt, 'PP')}
                       </TableCell>
                       <TableCell className="text-muted-foreground text-sm">
-                        {(standard.file.size / (1024 * 1024)).toFixed(1)} MB
+                        {(standard.fileSize / (1024 * 1024)).toFixed(1)} MB
                       </TableCell>
                       <TableCell>
                         <Button
@@ -188,7 +232,7 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
                   ))}
                   {filteredStandards.length === 0 && (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
                         {searchQuery ? 'No standards match your search' : 'No standards uploaded yet'}
                       </TableCell>
                     </TableRow>
