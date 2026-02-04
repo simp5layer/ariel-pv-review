@@ -10,6 +10,7 @@ import { Progress } from '@/components/ui/progress';
 import { SystemType } from '@/types/project';
 import { FolderPlus, MapPin, Zap, ArrowRight, Upload, File, X, FileText, Table, Image, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 const systemTypes: { value: SystemType; label: string; description: string }[] = [
   { value: 'standalone', label: 'Standalone', description: 'Off-grid system with battery storage' },
@@ -88,19 +89,35 @@ const ProjectSetup: React.FC = () => {
   };
 
   const handleCreateProject = async () => {
-    if (!projectName.trim() || !location.trim() || selectedFiles.length === 0) return;
+    if (!projectName.trim()) {
+      toast.error('Please enter a project name');
+      return;
+    }
+    if (!location.trim()) {
+      toast.error('Please enter a location');
+      return;
+    }
+    if (selectedFiles.length === 0) {
+      toast.error('Please select at least one file');
+      return;
+    }
 
-    const project = await createProject({
-      name: projectName,
-      location,
-      systemType,
-      files: selectedFiles
-    });
+    try {
+      const project = await createProject({
+        name: projectName,
+        location,
+        systemType,
+        files: selectedFiles
+      });
 
-    if (project) {
-      setCurrentProject(project);
-      addToHistory(project);
-      setCurrentStep(1);
+      if (project) {
+        setCurrentProject(project);
+        addToHistory(project);
+        setCurrentStep(1);
+      }
+    } catch (error) {
+      console.error('Create project error:', error);
+      toast.error('Failed to create project. Please try again.');
     }
   };
 
