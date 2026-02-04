@@ -72,21 +72,43 @@ async function processDeliverablesJob(
 
     await supabase.from("processing_jobs").update({ progress: 85 }).eq("id", jobId);
 
-    // Upsert deliverables to database
+    // Save deliverables to database (avoid relying on a DB unique constraint for upsert)
     for (const del of generatedDeliverables) {
-      const { error } = await supabase
+      const now = new Date().toISOString();
+      const { data: existing, error: selErr } = await supabase
         .from("deliverables")
-        .upsert({
-          submission_id: submissionId,
-          type: del.type,
-          name: getDeliverableName(del.type),
-          status: "generated",
-          content: del.content,
-          generated_at: new Date().toISOString(),
-        }, { onConflict: "submission_id,type" });
+        .select("id")
+        .eq("submission_id", submissionId)
+        .eq("type", del.type)
+        .maybeSingle();
 
-      if (error) {
-        console.error(`Failed to save deliverable ${del.type}:`, error);
+      if (selErr) {
+        console.error(`Failed to check existing deliverable ${del.type}:`, selErr);
+      }
+
+      if (existing?.id) {
+        const { error: updErr } = await supabase
+          .from("deliverables")
+          .update({
+            name: getDeliverableName(del.type),
+            status: "updated",
+            content: del.content,
+            updated_at: now,
+          })
+          .eq("id", existing.id);
+        if (updErr) console.error(`Failed to update deliverable ${del.type}:`, updErr);
+      } else {
+        const { error: insErr } = await supabase
+          .from("deliverables")
+          .insert({
+            submission_id: submissionId,
+            type: del.type,
+            name: getDeliverableName(del.type),
+            status: "generated",
+            content: del.content,
+            generated_at: now,
+          });
+        if (insErr) console.error(`Failed to insert deliverable ${del.type}:`, insErr);
       }
     }
 
@@ -129,25 +151,165 @@ async function generateDeliverableContent(
   lovableApiKey: string
 ): Promise<string> {
   const systemPrompts: Record<DeliverableType, string> = {
-    ai_prompt_log: `Generate a formatted AI Prompt Log documenting all AI interactions for this PV design review. Include timestamps, prompt types (extraction/calculation/compliance), token usage, and validation status. Format as Markdown.`,
-    design_review_report: `Generate a comprehensive Design Review Report with Executive Summary for this PV project. Include project overview, methodology, key findings summary, compliance status, and recommendations. Format as professional engineering report in Markdown.`,
-    issue_register: `Generate a Non-Conformity Report (NCR) / Issue Register in tabular format. List all findings with: Issue ID, Name, Description, Location, Standard Reference, Severity (P0/P1/P2), Action Type, and Required Action. Format as Markdown table.`,
-    compliance_checklist: `Generate a Standards Compliance Checklist covering IEC, SEC, SBC, SASO, MOMRA, SERA regulations. For each applicable clause, indicate PASS/FAIL/N/A with evidence references. Format as Markdown checklist.`,
-    recalculation_sheet: `Generate a Recalculation Sheet showing all engineering calculations with explicit formulas, inputs, assumptions, and results. Include voltage calculations, current checks, cable sizing verification. Format as Markdown with formulas.`,
-    redline_notes: `Generate Redline Notes listing specific corrections needed on the design drawings. Reference exact locations (file, page, section) and describe the required changes. Format as numbered list in Markdown.`,
-    bom_boq: `Generate an Optimized Bill of Materials (BoM) and Bill of Quantities (BoQ) based on extracted data. Include component counts, specifications, and any optimization recommendations. Format as Markdown tables.`,
-    risk_reflection: `Generate a 1-page Risk Reflection document assessing AI reliability and limitations in this review. Discuss confidence levels, areas requiring human verification, and potential blind spots. Format as Markdown.`,
+    ai_prompt_log: `You are a PV engineering QA assistant.
+
+Create an **AI Prompt Log** for this project as Markdown.
+
+Rules:
+- Only include facts present in inputs.
+- If the inputs do not contain real prompts/timestamps, explicitly state "INSUFFICIENT DATA" and list what is missing.
+
+Include:
+- Prompt types used (extraction/compliance/deliverables)
+- Models used (if provided)
+- Token usage (if provided)
+- Validation status (if provided)
+- A clear audit trail section`,
+
+    design_review_report: `You are a senior PV design engineer writing an ITRFFE-style Design Review Report.
+
+Write a **Design Review Report** as Markdown with the following REQUIRED sections and formatting:
+
+1) Title block (Project name/location/system type if available)
+2) Executive Summary (5–10 bullet points + short paragraph)
+3) Project Overview
+   - System capacity (DC kWp, AC kW) if available
+   - Module count
+   - Inverter count + key inverter limits (max DC voltage/current, MPPT range)
+   - **String configuration**: stringCount, modulesPerString, stringsPerMPPT
+4) Data Sources & Traceability
+   - For each key quantity (moduleCount, inverterCount, stringCount, modulesPerString, maxVoltage, totalCapacity), include **Source File + Page/Section/Cell**.
+   - Use extractedData.trace and/or findings.evidencePointer.
+   - Do NOT invent references. If missing, write "INSUFFICIENT DATA" for that item.
+5) Compliance Status
+   - Compliance percentage + explanation of scoring basis (if provided)
+   - Summary table of findings by severity
+6) String Configuration Analysis
+   - Validate string Voc/Vmp vs inverter limits (use actual numbers; show intermediate steps)
+   - Highlight any over-voltage / over-current risks
+7) Detailed Findings
+   - For each finding: Issue ID, severity (P0/P1/P2), standard clause, evidence pointer, required action
+8) Recommendations & Next Steps
+
+Strict rules:
+- Do not assume values not present.
+- If module/inverter data is incomplete, include a Missing Inputs section instead of guessing.`,
+
+    issue_register: `You are a PV compliance engineer.
+
+Generate an **Issue Register (NCR-style)** as a Markdown table.
+
+Columns (required): Issue ID | Severity (P0/P1/P2) | Title | Description | Location | Standard Reference | Evidence (File+Ref) | Required Action.
+
+Rules:
+- Use findings array only.
+- If evidencePointer is missing, write "INSUFFICIENT DATA" in Evidence.
+- Keep actions specific and testable.`,
+
+    compliance_checklist: `You are a PV compliance engineer.
+
+Generate a **Standards Compliance Checklist** as Markdown.
+
+Rules:
+- Derive checklist items from the *provided findings* and any explicit standard references found in inputs.
+- Each checklist item must include: Clause | Requirement | Status (PASS/FAIL/N/A) | Evidence (File+Ref).
+- Do not fabricate clauses. If you cannot cite a clause, mark N/A and explain in one sentence.`,
+
+    recalculation_sheet: `You are a PV design engineer producing an ITRFFE-style recalculation sheet.
+
+Generate a **Recalculation Sheet** as Markdown with explicit formulas and substituted numbers.
+
+REQUIRED calculations (if inputs exist; otherwise mark "INSUFFICIENT DATA" and list missing fields):
+
+A) String voltage calculations
+   - Voc_STC (module)
+   - Voc_cold (module) using temperature coefficient and Tmin
+   - String Voc_cold = modulesPerString × Voc_cold(module)
+   - Vmp_STC (module) and String Vmp_STC
+
+B) Current calculations
+   - Isc, Imp (module)
+   - String current (Imp)
+   - Total array current based on stringsPerMPPT / total string count
+
+C) Inverter compatibility checks
+   - Compare String Voc_cold vs inverter max DC voltage
+   - Compare string current / parallel strings vs inverter max input current
+   - Compare String Vmp vs MPPT voltage range
+
+D) Cable sizing verification
+   - If conductor size/length/current is available, show voltage drop and ampacity check.
+
+Formatting rules:
+- Every calculation must show: Formula → Inputs → Substitution → Result → Pass/Fail/Insufficient.
+- Cite sources for each input (File + Page/Cell), using extractedData.trace or findings.evidencePointer.
+- Do not invent Tmin; if not provided, request it.`,
+
+    redline_notes: `You are a PV QA reviewer creating actionable redline notes.
+
+Generate **Redline Notes** as a Markdown list.
+
+For EACH issue (from findings), include ALL fields:
+- File name
+- Page number / section / cell
+- Location on drawing/document
+- Current state (what is shown)
+- Required correction (exact edit)
+- Standard reference (clause)
+
+Rules:
+- Use findings.evidencePointer as primary source.
+- If a field is missing, write "INSUFFICIENT DATA" and specify what to provide.
+- Keep corrections as unambiguous markup instructions.`,
+
+    bom_boq: `You are a PV engineer preparing BoM/BoQ deliverables.
+
+Generate an **Optimized BoM & BoQ** as Markdown tables.
+
+Requirements:
+- Separate BoM and BoQ sections.
+- For each line item include: Category | Description | Qty | Unit | Specification | Source (File+Ref).
+- Use extractedData.bom / extractedData.boq when available.
+- Do not invent quantities/specs; if missing, list as "INSUFFICIENT DATA".`,
+
+    risk_reflection: `You are a PV engineering auditor writing a 1-page risk reflection on AI reliability.
+
+Generate **Risk Reflection** as Markdown with these REQUIRED sections:
+
+1) Confidence by data category (High/Medium/Low)
+   - String configuration
+   - Module parameters
+   - Inverter parameters
+   - Cable lengths/sizing
+   - BoM/BoQ
+   - Standards clause mapping
+
+2) Data quality issues
+   - Missing fields (use extractedData.missingData)
+   - Low-quality sources (e.g., PDFs with no text)
+
+3) Human verification checklist
+   - Specific items an engineer must verify in drawings/datasheets
+
+4) AI limitations in this review
+   - Explicitly call out any unsupported file types / truncated text
+
+Rules:
+- Base confidence on presence/traceability of inputs (trace/evidencePointer).
+- If missingData is absent, state that limitation.
+`,
   };
 
-  const userPrompt = `
-PROJECT FINDINGS (${findings.length} items):
+  const userPrompt = `INPUTS (do not assume missing data):
+
+FINDINGS (${findings.length}):
 ${JSON.stringify(findings, null, 2)}
 
-EXTRACTED DATA:
+EXTRACTED_DATA:
 ${JSON.stringify(extractedData, null, 2)}
 
-Generate the ${getDeliverableName(type)} based on this data. Be thorough, professional, and cite specific evidence where applicable.
-`;
+OUTPUT:
+Generate the ${getDeliverableName(type)}. Use only the provided inputs, and include file/page/section/cell references wherever possible.`;
 
   const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
     method: "POST",

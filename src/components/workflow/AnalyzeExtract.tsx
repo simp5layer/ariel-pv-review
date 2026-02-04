@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import StatCard from '@/components/ui/StatCard';
 import { Progress } from '@/components/ui/progress';
+import TraceabilityPanel from './TraceabilityPanel';
 import { 
   Search, 
   Layers, 
@@ -60,6 +61,7 @@ interface ExtendedExtractedData extends ExtractedData {
   };
   pvParameters: ExtractedData['pvParameters'] & {
     modulesPerString?: number;
+    stringsPerMPPT?: number;
     maxVoltageCalculation?: string | null;
     acCapacity?: number;
   };
@@ -193,6 +195,7 @@ const AnalyzeExtract: React.FC = () => {
         notes: aiData.notes,
         moduleParameters: aiData.moduleParameters,
         inverterParameters: aiData.inverterParameters,
+        stringCalculations: (aiData as any).stringCalculations,
       };
 
       // Add extended fields
@@ -202,6 +205,7 @@ const AnalyzeExtract: React.FC = () => {
       extendedExtracted.cableSummary.dcCableSpec = aiData.cableSummary?.dcCableSpec;
       extendedExtracted.cableSummary.acCableSpec = aiData.cableSummary?.acCableSpec;
       extendedExtracted.pvParameters.modulesPerString = Number(aiData.pvParameters?.modulesPerString ?? 0) || 0;
+      extendedExtracted.pvParameters.stringsPerMPPT = Number((aiData.pvParameters as any)?.stringsPerMPPT ?? 0) || 0;
       extendedExtracted.pvParameters.maxVoltageCalculation = aiData.pvParameters?.maxVoltageCalculation;
       extendedExtracted.pvParameters.acCapacity = Number(aiData.pvParameters?.acCapacity ?? 0) || 0;
 
@@ -395,6 +399,23 @@ const AnalyzeExtract: React.FC = () => {
                 variant="success"
               />
             </div>
+
+            {/* Source / traceability for key extracted values */}
+            <TraceabilityPanel
+              trace={extendedData.trace}
+              items={[
+                { label: 'Module count', traceKey: 'pvParameters.moduleCount', fallbackKeys: ['moduleCount'] },
+                { label: 'Inverter count', traceKey: 'pvParameters.inverterCount', fallbackKeys: ['inverterCount'] },
+                { label: 'String count', traceKey: 'pvParameters.stringCount', fallbackKeys: ['stringCount'] },
+                { label: 'Modules per string', traceKey: 'pvParameters.modulesPerString', fallbackKeys: ['modulesPerString'] },
+                { label: 'Strings per MPPT', traceKey: 'pvParameters.stringsPerMPPT', fallbackKeys: ['stringsPerMPPT'] },
+                { label: 'Array count', traceKey: 'pvParameters.arrayCount', fallbackKeys: ['arrayCount'] },
+                { label: 'Total capacity', traceKey: 'pvParameters.totalCapacity', fallbackKeys: ['totalCapacity'] },
+                { label: 'Max DC voltage', traceKey: 'pvParameters.maxVoltage', fallbackKeys: ['maxVoltage'] },
+                { label: 'DC cable length', traceKey: 'cableSummary.dcLength', fallbackKeys: ['dcLength'] },
+                { label: 'AC cable length', traceKey: 'cableSummary.acLength', fallbackKeys: ['acLength'] },
+              ]}
+            />
 
             {/* Inverter Specifications */}
             {extendedData.inverterSpecs && extendedData.inverterSpecs.length > 0 && (
