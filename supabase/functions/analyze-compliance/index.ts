@@ -4,15 +4,21 @@ import { getDocument } from "https://esm.sh/pdfjs-serverless@0.3.2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
+    "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
-async function extractPdfText(data: Uint8Array): Promise<string> {
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+
+async function extractPdfText(data: Uint8Array, maxPages = 20): Promise<string> {
   try {
     const doc = await getDocument({ data, useSystemFonts: true }).promise;
-    const maxPages = Math.min(doc.numPages, 50);
+    const pagesToRead = Math.min(doc.numPages, maxPages);
     const chunks: string[] = [];
-    for (let i = 1; i <= maxPages; i++) {
+    for (let i = 1; i <= pagesToRead; i++) {
       const page = await doc.getPage(i);
       const textContent = await page.getTextContent();
       const pageText = (textContent.items as any[])
@@ -25,102 +31,57 @@ async function extractPdfText(data: Uint8Array): Promise<string> {
     return chunks.join("\n");
   } catch (err) {
     console.error("PDF extraction error:", err);
-    // Return empty string instead of throwing - the AI will handle missing text gracefully
     return "";
   }
 }
 
-interface ComplianceFinding {
-  issueId: string;
-  name: string;
-  description: string;
-  location: string;
-  standardReference: string;
-  severity: "critical" | "major" | "minor" | "pass";
-  actionType: "corrective" | "recommendation";
-  action: string;
-  evidencePointer: string;
-  violatedRequirement: string;
-  riskExplanation: string;
-  impactIfUnresolved: string;
-}
-
 interface AnalysisRequest {
   projectId: string;
-  projectFiles: { name: string; content: string }[];
+  projectFiles?: { name: string; content: string }[];
 }
 
-Deno.serve(async (req) => {
-  // Handle CORS preflight
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+async function processComplianceJob(
+  jobId: string,
+  projectId: string,
+  clientProjectFiles: { name: string; content: string }[],
+  supabaseUrl: string,
+  supabaseServiceKey: string,
+  lovableApiKey: string
+) {
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
   try {
-    // Get auth header
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: "Missing authorization header" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    // Update job to processing
+    await supabase
+      .from("processing_jobs")
+      .update({ status: "processing", progress: 10 })
+      .eq("id", jobId);
 
-    // Initialize Supabase client
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Verify user
-    const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    
-    if (authError || !user) {
-      return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Parse request body
-    const { projectId, projectFiles } = await req.json() as AnalysisRequest;
-
-    if (!projectId || !projectFiles || projectFiles.length === 0) {
-      return new Response(
-        JSON.stringify({ error: "Missing projectId or projectFiles" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Fetch all global standards from the library
+    // Fetch global standards
     const { data: standards, error: standardsError } = await supabase
       .from("standards_library")
       .select("*")
       .eq("is_global", true);
 
-    if (standardsError) {
-      console.error("Error fetching standards:", standardsError);
-      return new Response(
-        JSON.stringify({ error: "Failed to fetch standards library" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    if (!standards || standards.length === 0) {
-      return new Response(
-        JSON.stringify({ 
-          error: "No standards found in library. Please upload standards first.",
+    if (standardsError || !standards || standards.length === 0) {
+      await supabase.from("processing_jobs").update({
+        status: "completed",
+        progress: 100,
+        result: {
           findings: [],
-          compliancePercentage: 0
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+          compliancePercentage: 0,
+          summary: "No standards found in library. Please upload standards first.",
+          standardsUsed: [],
+        },
+      }).eq("id", jobId);
+      return;
     }
 
-    // Download and extract standards text from storage
-    const standardContents: { name: string; content: string; status: string }[] = [];
+    await supabase.from("processing_jobs").update({ progress: 20 }).eq("id", jobId);
 
-    for (const standard of standards) {
+    // Extract standards text (limit pages to reduce CPU)
+    const standardContents: { name: string; content: string; status: string }[] = [];
+    for (const standard of standards.slice(0, 5)) { // Limit to 5 standards
       if (!standard.storage_path) continue;
 
       const { data: fileData, error: downloadError } = await supabase.storage
@@ -133,7 +94,7 @@ Deno.serve(async (req) => {
       }
 
       const buf = new Uint8Array(await fileData.arrayBuffer());
-      const extractedText = await extractPdfText(buf);
+      const extractedText = await extractPdfText(buf, 15); // Limit to 15 pages per standard
       standardContents.push({
         name: standard.file_name,
         content: extractedText,
@@ -141,43 +102,28 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (standardContents.length === 0) {
-      return new Response(
-        JSON.stringify({
-          error: "No readable standards content found (PDFs may be scanned). Please upload text-based standards PDFs.",
-          findings: [],
-          compliancePercentage: 0,
-        }),
-        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
+    await supabase.from("processing_jobs").update({ progress: 40 }).eq("id", jobId);
 
-    // Load and extract project file text directly from storage (so the AI sees real content)
-    const { data: projectFilesDb, error: projectFilesErr } = await supabase
+    // Load project files
+    const { data: projectFilesDb } = await supabase
       .from("project_files")
       .select("name,file_type,storage_path,size")
       .eq("project_id", projectId)
       .order("uploaded_at", { ascending: true });
 
-    if (projectFilesErr) {
-      console.error("Error fetching project_files:", projectFilesErr);
-      return new Response(
-        JSON.stringify({ error: "Failed to fetch project files" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
-    }
-
     const projectFileContents: { name: string; content: string; status: string }[] = [];
-    for (const f of projectFilesDb || []) {
+    for (const f of (projectFilesDb || []).slice(0, 5)) { // Limit to 5 files
       if (!f.storage_path) continue;
-      const { data: blob, error: dlErr } = await supabase.storage.from("project-files").download(f.storage_path);
+      const { data: blob, error: dlErr } = await supabase.storage
+        .from("project-files")
+        .download(f.storage_path);
       if (dlErr || !blob) {
         console.error("Project file download error:", f.name, dlErr);
         continue;
       }
       const buf = new Uint8Array(await blob.arrayBuffer());
       if (f.file_type === "pdf") {
-        const text = await extractPdfText(buf);
+        const text = await extractPdfText(buf, 15); // Limit to 15 pages
         projectFileContents.push({ name: f.name, content: text, status: text ? "ok" : "no_text" });
       } else {
         projectFileContents.push({
@@ -188,17 +134,15 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Build the prompt for GPT-5.2 analysis
+    await supabase.from("processing_jobs").update({ progress: 60 }).eq("id", jobId);
+
+    // Build prompt
     const systemPrompt = `You are an expert PV (photovoltaic) design engineer conducting a comprehensive design review. Your task is to analyze project files against uploaded standards and identify compliance issues.
 
 CRITICAL RULES:
 1. ONLY reference clauses and requirements that are explicitly stated in the uploaded standards documents
 2. Never invent or assume requirements - if data is missing, mark as "INSUFFICIENT DATA"
-3. Every finding MUST include:
-   - Specific clause reference from the standards
-   - Evidence pointer (file name + page/section)
-   - Explicit calculation or comparison showing pass/fail
-   - Recommended corrective action
+3. Every finding MUST include specific clause reference and evidence pointer
 
 SEVERITY CLASSIFICATION:
 - CRITICAL: Safety hazards, code violations, system won't function
@@ -206,47 +150,44 @@ SEVERITY CLASSIFICATION:
 - MINOR: Optimization opportunities, documentation gaps
 - PASS: Requirement verified and met
 
-OUTPUT FORMAT (JSON array of findings):
+OUTPUT FORMAT (JSON object):
 {
   "findings": [
     {
       "issueId": "unique-id",
       "name": "Short issue title",
-      "description": "Detailed description of the non-compliance",
-      "location": "Where in the project files this was found",
-      "standardReference": "Standard name, clause number, exact text",
+      "description": "Detailed description",
+      "location": "Where found",
+      "standardReference": "Standard name, clause number",
       "severity": "critical|major|minor|pass",
       "actionType": "corrective|recommendation",
-      "action": "Specific steps to resolve",
-      "evidencePointer": "File: X, Page/Section: Y",
-      "violatedRequirement": "Exact requirement text from standard",
+      "action": "Steps to resolve",
+      "evidencePointer": "File: X, Page: Y",
+      "violatedRequirement": "Requirement text",
       "riskExplanation": "What happens if not fixed",
-      "impactIfUnresolved": "Consequences of inaction"
+      "impactIfUnresolved": "Consequences"
     }
   ],
   "compliancePercentage": 85,
   "summary": "Brief executive summary"
 }`;
 
-    const MAX_PER_DOC = 80_000;
+    const MAX_PER_DOC = 40000; // Reduced from 80000
     const standardsText = standardContents
       .map((s) => {
         const clipped = (s.content || "").slice(0, MAX_PER_DOC);
-        const truncated = clipped.length < (s.content || "").length ? "\n[TRUNCATED]" : "";
-        return `\n--- ${s.name} [${s.status}] ---\n${clipped}${truncated}`;
+        return `\n--- ${s.name} [${s.status}] ---\n${clipped}`;
       })
       .join("\n");
 
-    // Include both: (1) real extracted text from storage, plus (2) any structured context passed from client (e.g., extracted_data.json)
-    const clientProvided = (projectFiles || [])
+    const clientProvided = (clientProjectFiles || [])
       .map((f) => `\n--- ${f.name} [client-provided] ---\n${(f.content || "").slice(0, MAX_PER_DOC)}`)
       .join("\n");
 
     const projectText = projectFileContents
       .map((f) => {
         const clipped = (f.content || "").slice(0, MAX_PER_DOC);
-        const truncated = clipped.length < (f.content || "").length ? "\n[TRUNCATED]" : "";
-        return `\n--- ${f.name} [${f.status}] ---\n${clipped}${truncated}`;
+        return `\n--- ${f.name} [${f.status}] ---\n${clipped}`;
       })
       .join("\n");
 
@@ -259,19 +200,11 @@ ${projectText}
 ADDITIONAL STRUCTURED CONTEXT (client-provided):
 ${clientProvided}
 
-Please analyze these project files against ALL uploaded standards and provide a comprehensive compliance assessment. 
-If the project PDFs have no extractable text (status=no_text), return findings with severity=minor and clearly state INSUFFICIENT DATA + what exact source is needed.
-Return the analysis as a JSON object with findings array, compliancePercentage, and summary.`;
+Analyze these project files against ALL uploaded standards and provide compliance assessment. Return JSON with findings, compliancePercentage, and summary.`;
 
-    // Call GPT-5.2 via Lovable AI Gateway
-    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
-    if (!lovableApiKey) {
-      return new Response(
-        JSON.stringify({ error: "AI service not configured" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
+    await supabase.from("processing_jobs").update({ progress: 70 }).eq("id", jobId);
 
+    // Call GPT-5.2
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -285,84 +218,158 @@ Return the analysis as a JSON object with findings array, compliancePercentage, 
           { role: "user", content: userPrompt }
         ],
         temperature: 0.1,
-        max_completion_tokens: 8000,
+        max_completion_tokens: 6000,
         response_format: { type: "json_object" }
       }),
     });
 
+    await supabase.from("processing_jobs").update({ progress: 90 }).eq("id", jobId);
+
     if (!aiResponse.ok) {
       const errorText = await aiResponse.text();
-      if (aiResponse.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limits exceeded, please try again later." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (aiResponse.status === 402) {
-        return new Response(JSON.stringify({ error: "Payment required, please add funds to your Lovable AI workspace." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
       console.error("AI Gateway error:", aiResponse.status, errorText);
-      return new Response(JSON.stringify({ error: "AI analysis failed" }), {
-        status: 500,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      await supabase.from("processing_jobs").update({
+        status: "failed",
+        error: aiResponse.status === 429 
+          ? "Rate limit exceeded. Please try again later."
+          : aiResponse.status === 402
+          ? "AI credits exhausted. Please add credits."
+          : `AI analysis failed: ${aiResponse.status}`,
+      }).eq("id", jobId);
+      return;
     }
 
     const aiResult = await aiResponse.json();
     const analysisContent = aiResult.choices?.[0]?.message?.content;
 
     if (!analysisContent) {
-      return new Response(
-        JSON.stringify({ error: "Empty AI response" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      await supabase.from("processing_jobs").update({
+        status: "failed",
+        error: "Empty AI response",
+      }).eq("id", jobId);
+      return;
     }
 
-    // Parse the AI response
     let analysis;
     try {
       analysis = JSON.parse(analysisContent);
     } catch (parseError) {
       console.error("Failed to parse AI response:", parseError);
-      return new Response(
-        JSON.stringify({ error: "Invalid AI response format" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      await supabase.from("processing_jobs").update({
+        status: "failed",
+        error: "Invalid AI response format",
+      }).eq("id", jobId);
+      return;
     }
 
-    // Log the AI interaction for audit trail
+    // Log AI interaction
     const tokensUsed = aiResult.usage?.total_tokens || 0;
-    
     await supabase.from("ai_prompt_logs").insert({
       project_id: projectId,
       prompt_type: "compliance",
-      prompt: userPrompt.substring(0, 10000), // Truncate for storage
+      prompt: userPrompt.substring(0, 10000),
       response: analysisContent.substring(0, 10000),
       model: "openai/gpt-5.2",
       tokens_used: tokensUsed,
       validation_status: "validated"
     });
 
-    return new Response(
-      JSON.stringify({
+    // Complete the job
+    await supabase.from("processing_jobs").update({
+      status: "completed",
+      progress: 100,
+      result: {
         findings: analysis.findings || [],
         compliancePercentage: analysis.compliancePercentage || 0,
         summary: analysis.summary || "Analysis complete",
         standardsUsed: standards.map(s => s.file_name),
-        tokensUsed
-      }),
-      { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        tokensUsed,
+      },
+    }).eq("id", jobId);
+
+  } catch (error) {
+    console.error("Background processing error:", error);
+    await supabase.from("processing_jobs").update({
+      status: "failed",
+      error: error instanceof Error ? error.message : "Processing failed",
+    }).eq("id", jobId);
+  }
+}
+
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return json({ error: "Missing authorization header" }, 401);
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
+
+    if (!lovableApiKey) {
+      return json({ error: "AI service not configured" }, 500);
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    const token = authHeader.replace("Bearer ", "");
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+    if (authError || !user) {
+      return json({ error: "Unauthorized" }, 401);
+    }
+
+    const { projectId, projectFiles } = await req.json() as AnalysisRequest;
+
+    if (!projectId) {
+      return json({ error: "Missing projectId" }, 400);
+    }
+
+    // Create a job record immediately
+    const { data: job, error: jobError } = await supabase
+      .from("processing_jobs")
+      .insert({
+        project_id: projectId,
+        user_id: user.id,
+        job_type: "compliance",
+        status: "pending",
+        progress: 0,
+      })
+      .select()
+      .single();
+
+    if (jobError || !job) {
+      console.error("Failed to create job:", jobError);
+      return json({ error: "Failed to create processing job" }, 500);
+    }
+
+    // Start background processing using EdgeRuntime.waitUntil
+    // @ts-ignore - EdgeRuntime is available in Supabase Edge Functions
+    EdgeRuntime.waitUntil(
+      processComplianceJob(
+        job.id,
+        projectId,
+        projectFiles || [],
+        supabaseUrl,
+        supabaseServiceKey,
+        lovableApiKey
+      )
     );
+
+    // Return immediately with job ID
+    return json({
+      jobId: job.id,
+      status: "pending",
+      message: "Compliance analysis started. Poll for results.",
+    });
 
   } catch (error) {
     console.error("Analyze compliance error:", error);
-    const errorMessage = error instanceof Error ? error.message : "Internal server error";
-    return new Response(
-      JSON.stringify({ error: errorMessage }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return json({ error: error instanceof Error ? error.message : "Internal server error" }, 500);
   }
 });

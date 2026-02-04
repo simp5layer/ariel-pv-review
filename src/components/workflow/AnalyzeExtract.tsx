@@ -87,6 +87,43 @@ const AnalyzeExtract: React.FC = () => {
   // Cast to extended type for new fields
   const extendedData = extractedData as ExtendedExtractedData | null;
 
+  // Poll for job completion
+  const pollJobStatus = async (jobId: string): Promise<any> => {
+    const maxAttempts = 90;
+    const interval = 2000;
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      const { data, error } = await supabase
+        .from("processing_jobs")
+        .select("status, progress, result, error")
+        .eq("id", jobId)
+        .single();
+
+      if (error) throw new Error("Failed to poll job status");
+
+      // Update progress based on job progress
+      if (data.progress) {
+        setAnalysisProgress(data.progress);
+        if (data.progress >= 20) setAnalysisSteps(prev => ({ ...prev, fileConversion: true }));
+        if (data.progress >= 40) setAnalysisSteps(prev => ({ ...prev, layerParsing: true }));
+        if (data.progress >= 60) setAnalysisSteps(prev => ({ ...prev, textExtraction: true }));
+        if (data.progress >= 90) setAnalysisSteps(prev => ({ ...prev, pvCalculation: true }));
+      }
+
+      if (data.status === "completed") {
+        return data.result;
+      }
+      if (data.status === "failed") {
+        throw new Error(data.error || "Job failed");
+      }
+
+      await new Promise((r) => setTimeout(r, interval));
+    }
+    throw new Error("Analysis timed out. Please try again.");
+  };
+
   const startGPTAnalysis = async () => {
     if (!currentProject || currentProject.files.length === 0) {
       toast.error('No files to analyze');
@@ -95,26 +132,16 @@ const AnalyzeExtract: React.FC = () => {
 
     setIsAnalyzing(true);
     setError(null);
-    setAnalysisProgress(10);
+    setAnalysisProgress(5);
     setAnalysisSteps({ fileConversion: false, layerParsing: false, textExtraction: false, pvCalculation: false });
 
     try {
-      // Step 1: File conversion
-      setAnalysisSteps(prev => ({ ...prev, fileConversion: true }));
-      setAnalysisProgress(25);
-
-      // Step 2: Layer parsing
-      setAnalysisSteps(prev => ({ ...prev, layerParsing: true }));
-      setAnalysisProgress(40);
-
-      // Step 3: Call GPT-5.2 via edge function
-      setAnalysisSteps(prev => ({ ...prev, textExtraction: true }));
-      setAnalysisProgress(60);
-
       const { data: sessionData } = await supabase.auth.getSession();
       if (!sessionData.session?.access_token) {
         throw new Error('Not authenticated');
       }
+
+      toast.info('Starting GPT-5.2 analysis. This may take a minute...');
 
       const { data, error: fnError } = await supabase.functions.invoke('extract-data', {
         body: {
@@ -133,11 +160,13 @@ const AnalyzeExtract: React.FC = () => {
         throw new Error(data.error);
       }
 
-      // Step 4: Process results
-      setAnalysisSteps(prev => ({ ...prev, pvCalculation: true }));
-      setAnalysisProgress(90);
+      // Poll for results if we got a jobId
+      let resultData = data;
+      if (data?.jobId) {
+        resultData = await pollJobStatus(data.jobId);
+      }
 
-      const aiData = data?.extractedData as Partial<ExtendedExtractedData> | undefined;
+      const aiData = resultData?.extractedData as Partial<ExtendedExtractedData> | undefined;
       if (!aiData) {
         throw new Error('Extraction returned no data');
       }
