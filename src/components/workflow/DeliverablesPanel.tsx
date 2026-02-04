@@ -18,7 +18,8 @@ import {
   Package,
   Clock,
   AlertTriangle,
-  Loader2
+  Loader2,
+  FileWarning
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -28,7 +29,9 @@ interface DeliverablesPanelProps {
   onRegenerateAll: () => void;
   onExportPackage: () => void;
   isGenerating?: boolean;
+  isExporting?: boolean;
   submissionNumber?: number;
+  exportStatus?: { ready: number; total: number; complete: boolean; hasErrors: boolean };
 }
 
 const deliverableOrder: DeliverableType[] = [
@@ -48,7 +51,9 @@ const DeliverablesPanel: React.FC<DeliverablesPanelProps> = ({
   onRegenerateAll,
   onExportPackage,
   isGenerating = false,
-  submissionNumber
+  isExporting = false,
+  submissionNumber,
+  exportStatus
 }) => {
   const getDeliverableStatus = (type: DeliverableType): Deliverable | undefined => {
     return deliverables.find(d => d.type === type);
@@ -149,8 +154,40 @@ const DeliverablesPanel: React.FC<DeliverablesPanelProps> = ({
           })}
         </div>
 
+        {/* Export Status Info */}
+        {exportStatus && (
+          <div className={`flex items-start gap-2 p-3 rounded-lg border ${
+            exportStatus.hasErrors 
+              ? 'bg-warning/10 border-warning/20' 
+              : exportStatus.complete 
+                ? 'bg-pass/10 border-pass/20' 
+                : 'bg-muted/30 border-border'
+          }`}>
+            {exportStatus.hasErrors ? (
+              <FileWarning className="w-4 h-4 text-warning mt-0.5" />
+            ) : exportStatus.complete ? (
+              <CheckCircle className="w-4 h-4 text-pass mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-warning mt-0.5" />
+            )}
+            <div>
+              <p className="text-sm font-medium">
+                {exportStatus.complete 
+                  ? exportStatus.hasErrors 
+                    ? 'Package Ready (With Warnings)' 
+                    : 'Package Ready'
+                  : 'Incomplete Package'}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {exportStatus.ready} of {exportStatus.total} deliverables available.
+                {exportStatus.hasErrors && ' Some have generation errors.'}
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Completion Warning */}
-        {!allGenerated && (
+        {!allGenerated && !exportStatus && (
           <div className="flex items-start gap-2 p-3 bg-warning/10 border border-warning/20 rounded-lg">
             <AlertTriangle className="w-4 h-4 text-warning mt-0.5" />
             <div>
@@ -167,7 +204,7 @@ const DeliverablesPanel: React.FC<DeliverablesPanelProps> = ({
           {hasMissing && (
             <Button 
               onClick={onGenerateMissing}
-              disabled={isGenerating}
+              disabled={isGenerating || isExporting}
               className="w-full gap-2"
             >
               {isGenerating ? (
@@ -187,7 +224,7 @@ const DeliverablesPanel: React.FC<DeliverablesPanelProps> = ({
             <Button 
               variant="outline"
               onClick={onRegenerateAll}
-              disabled={isGenerating || generatedCount === 0}
+              disabled={isGenerating || isExporting || generatedCount === 0}
               className="flex-1 gap-2"
             >
               <RefreshCw className="w-4 h-4" />
@@ -196,11 +233,20 @@ const DeliverablesPanel: React.FC<DeliverablesPanelProps> = ({
             <Button 
               variant="outline"
               onClick={onExportPackage}
-              disabled={!allGenerated}
+              disabled={isExporting || generatedCount === 0}
               className="flex-1 gap-2"
             >
-              <Download className="w-4 h-4" />
-              Export Package
+              {isExporting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Exporting...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  Export Package
+                </>
+              )}
             </Button>
           </div>
         </div>
