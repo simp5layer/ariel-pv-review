@@ -15,6 +15,8 @@ import {
 import SeverityBadge from '@/components/ui/SeverityBadge';
 import StatCard from '@/components/ui/StatCard';
 import DeliverablesPanel from './DeliverablesPanel';
+import DeliverablesViewer from './DeliverablesViewer';
+import TraceabilityPanel from './TraceabilityPanel';
 import { Deliverable, DeliverableType, DELIVERABLE_METADATA } from '@/types/project';
 import { useDeliverables } from '@/hooks/useDeliverables';
 import {
@@ -73,35 +75,56 @@ const DesignReview: React.FC = () => {
     }
   }, [latestSubmission?.id, submissionId, fetchDeliverables]);
 
-  // Build deliverables list combining fetched + computed status
+  // Auto-refresh deliverables for a short period after a new submission appears.
+  // This supports the new backend chaining (compliance -> deliverables) where deliverables
+  // may complete a few seconds after the compliance job finishes.
+  useEffect(() => {
+    if (!submissionId) return;
+
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 40; // ~2 minutes (40 * 3s)
+    const intervalMs = 3000;
+
+    const tick = async () => {
+      attempts++;
+      const updated = await fetchDeliverables(submissionId);
+      if (cancelled) return;
+      setDeliverables(updated);
+
+      const got = new Set(updated.map(d => d.type));
+      const done = deliverableOrder.every(t => got.has(t));
+      if (done || attempts >= maxAttempts) {
+        clearInterval(handle);
+      }
+    };
+
+    const handle = setInterval(tick, intervalMs);
+    // immediate refresh once
+    tick();
+
+    return () => {
+      cancelled = true;
+      clearInterval(handle);
+    };
+  }, [submissionId, fetchDeliverables]);
+
+  // Build deliverables list from persisted records only (avoid "computed" statuses)
+  // so the checklist reflects what was actually generated and stored.
   const displayDeliverables: Deliverable[] = useMemo(() => {
-    const now = new Date();
-    const hasFindings = findings.length > 0;
-    const hasBomBoq = Boolean((extractedData?.bom?.length || 0) + (extractedData?.boq?.length || 0));
     const fetchedMap = new Map(deliverables.map(d => [d.type, d]));
 
     return deliverableOrder.map((type) => {
       const fetched = fetchedMap.get(type);
-      if (fetched && fetched.status !== 'not_generated') {
-        return fetched;
-      }
-
-      // Fallback computed status
-      let status: Deliverable['status'] = 'not_generated';
-      if (type === 'bom_boq' && hasBomBoq) status = 'generated';
-      if ((type === 'issue_register' || type === 'compliance_checklist') && hasFindings) status = 'generated';
-      if (type === 'ai_prompt_log' && (hasFindings || hasBomBoq)) status = 'generated';
-
-      return {
-        id: type,
+      return fetched ?? {
+        id: `placeholder-${type}`,
         type,
         name: DELIVERABLE_METADATA[type].name,
-        status,
-        generatedAt: status !== 'not_generated' ? now : undefined,
+        status: 'not_generated',
         submissionNumber: submissions.length || undefined,
       };
     });
-  }, [extractedData?.bom, extractedData?.boq, findings.length, submissions.length, deliverables]);
+  }, [submissions.length, deliverables]);
 
   const handleRunReview = async () => {
     // Build project file content from extracted data for AI analysis
@@ -250,11 +273,15 @@ const DesignReview: React.FC = () => {
             {/* Main Content */}
             <div className="space-y-6">
               <Tabs defaultValue="findings" className="space-y-6">
-                <TabsList>
+               <TabsList>
                   <TabsTrigger value="findings" className="gap-2">
                     <ClipboardCheck className="w-4 h-4" />
                     Compliance Findings
                   </TabsTrigger>
+                   <TabsTrigger value="deliverables" className="gap-2">
+                     <FileText className="w-4 h-4" />
+                     Deliverables
+                   </TabsTrigger>
                   <TabsTrigger value="bom" className="gap-2">
                     <Package className="w-4 h-4" />
                     BoM & BoQ
@@ -340,6 +367,11 @@ const DesignReview: React.FC = () => {
                                 <p className="text-xs text-muted-foreground font-mono bg-muted/50 p-1.5 rounded">
                                   📖 {finding.standardReference}
                                 </p>
+                                {finding.evidencePointer && (
+                                  <p className="text-xs text-muted-foreground font-mono bg-muted/50 p-1.5 rounded">
+                                    🔎 {finding.evidencePointer}
+                                  </p>
+                                )}
                               </div>
                             </TableCell>
                             <TableCell className="text-sm">
@@ -367,6 +399,14 @@ const DesignReview: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
+            </TabsContent>
+
+            <TabsContent value="deliverables" className="space-y-6">
+              <DeliverablesViewer
+                deliverables={displayDeliverables}
+                onGenerateMissing={handleGenerateMissing}
+                isGenerating={isGenerating}
+              />
             </TabsContent>
 
             <TabsContent value="timeline" className="space-y-6">
@@ -515,6 +555,21 @@ const DesignReview: React.FC = () => {
                         <StatCard title="Strings" value={extractedData.pvParameters.stringCount} icon={Calculator} variant="default" />
                         <StatCard title="Inverters" value={extractedData.pvParameters.inverterCount} icon={Calculator} variant="default" />
                       </div>
+
+                      <TraceabilityPanel
+                        trace={extractedData.trace}
+                        items={[
+                          { label: 'Module count', traceKey: 'pvParameters.moduleCount', fallbackKeys: ['moduleCount'] },
+                          { label: 'String count', traceKey: 'pvParameters.stringCount', fallbackKeys: ['stringCount'] },
+                          { label: 'Modules per string', traceKey: 'pvParameters.modulesPerString', fallbackKeys: ['modulesPerString'] },
+                          { label: 'Strings per MPPT', traceKey: 'pvParameters.stringsPerMPPT', fallbackKeys: ['stringsPerMPPT', 'stringsPerMPPT'] },
+                          { label: 'Inverter count', traceKey: 'pvParameters.inverterCount', fallbackKeys: ['inverterCount'] },
+                          { label: 'Total capacity', traceKey: 'pvParameters.totalCapacity', fallbackKeys: ['totalCapacity'] },
+                          { label: 'Max DC voltage', traceKey: 'pvParameters.maxVoltage', fallbackKeys: ['maxVoltage'] },
+                          { label: 'DC cable length', traceKey: 'cableSummary.dcLength', fallbackKeys: ['dcLength'] },
+                          { label: 'AC cable length', traceKey: 'cableSummary.acLength', fallbackKeys: ['acLength'] },
+                        ]}
+                      />
 
                       {/* BoM */}
                       <div className="space-y-3">

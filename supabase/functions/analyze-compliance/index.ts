@@ -40,11 +40,67 @@ interface AnalysisRequest {
   projectFiles?: { name: string; content: string }[];
 }
 
+type ExtractedDataLike = Record<string, unknown> | null;
+
+function safeJsonParse<T>(value: string): T | null {
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return null;
+  }
+}
+
+function getClientExtractedData(projectFiles: { name: string; content: string }[]): ExtractedDataLike {
+  const extracted = projectFiles.find((f) => (f?.name || "").toLowerCase() === "extracted_data.json");
+  if (!extracted?.content) return null;
+  return safeJsonParse<Record<string, unknown>>(extracted.content);
+}
+
+async function triggerDeliverablesGeneration(opts: {
+  supabaseUrl: string;
+  userAccessToken: string;
+  projectId: string;
+  submissionId: string;
+  findings: unknown[];
+  extractedData: ExtractedDataLike;
+}) {
+  const { supabaseUrl, userAccessToken, projectId, submissionId, findings, extractedData } = opts;
+
+  try {
+    const resp = await fetch(`${supabaseUrl}/functions/v1/generate-deliverables`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${userAccessToken}`,
+      },
+      body: JSON.stringify({
+        projectId,
+        submissionId,
+        findings,
+        extractedData,
+      }),
+    });
+
+    if (!resp.ok) {
+      const t = await resp.text().catch(() => "");
+      console.error("Auto deliverables trigger failed:", resp.status, t);
+      return { ok: false, status: resp.status };
+    }
+
+    const data = await resp.json().catch(() => ({}));
+    return { ok: true, data };
+  } catch (e) {
+    console.error("Auto deliverables trigger error:", e);
+    return { ok: false, status: 0 };
+  }
+}
+
 async function processComplianceJob(
   jobId: string,
   projectId: string,
   userId: string,
   userEmail: string,
+  userAccessToken: string,
   clientProjectFiles: { name: string; content: string }[],
   supabaseUrl: string,
   supabaseServiceKey: string,
@@ -382,6 +438,62 @@ Provide your analysis as JSON with findings array, compliancePercentage, and sum
       },
     }).eq("id", jobId);
 
+    // Auto-trigger deliverables generation (async) once compliance is completed successfully.
+    // We use the *same user access token* from the original request to satisfy auth in generate-deliverables.
+    if (submissionId && userAccessToken) {
+      // Prefer the full extracted_data.json provided by the client (contains trace/bom/boq/missingData)
+      // Fallback to DB extracted_data if not provided.
+      let extractedData: ExtractedDataLike = getClientExtractedData(clientProjectFiles);
+      if (!extractedData) {
+        const { data: dbExtracted } = await supabase
+          .from("extracted_data")
+          .select("layers,text_labels,cable_summary,pv_parameters,module_parameters,inverter_parameters")
+          .eq("project_id", projectId)
+          .maybeSingle();
+
+        if (dbExtracted) {
+          extractedData = {
+            layers: dbExtracted.layers,
+            textLabels: dbExtracted.text_labels,
+            cableSummary: dbExtracted.cable_summary,
+            pvParameters: dbExtracted.pv_parameters,
+            moduleParameters: dbExtracted.module_parameters,
+            inverterParameters: dbExtracted.inverter_parameters,
+          };
+        }
+      }
+
+      const delRes = await triggerDeliverablesGeneration({
+        supabaseUrl,
+        userAccessToken,
+        projectId,
+        submissionId,
+        findings,
+        extractedData,
+      });
+
+      if (!delRes.ok) {
+        // Do not fail compliance job for deliverables issues; user can still retry manually.
+        console.warn("Deliverables auto-generation was not started.");
+      } else {
+        // Attach job reference to compliance job result for debugging/traceability.
+        await supabase
+          .from("processing_jobs")
+          .update({
+            result: {
+              findings,
+              compliancePercentage: finalCompliance,
+              summary: analysis.summary || "Analysis complete",
+              standardsUsed: standards.map((s) => s.file_name),
+              tokensUsed,
+              submissionId,
+              deliverablesJob: (delRes as any).data,
+            },
+          })
+          .eq("id", jobId);
+      }
+    }
+
   } catch (error) {
     console.error("Background processing error:", error);
     await supabase.from("processing_jobs").update({
@@ -451,6 +563,7 @@ Deno.serve(async (req) => {
         projectId,
         user.id,
         user.email || "Engineer",
+        token,
         projectFiles || [],
         supabaseUrl,
         supabaseServiceKey,

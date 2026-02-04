@@ -104,6 +104,18 @@ export interface ExtractedData {
     maxInputCurrent: ExtractedParameter;
     maxStringsPerMppt: ExtractedParameter;
   };
+
+  /** Optional: pre-computed string electrical quantities (if inputs were available) */
+  stringCalculations?: {
+    vocStcModule?: number | null;
+    vmpStcModule?: number | null;
+    iscModule?: number | null;
+    impModule?: number | null;
+    vocColdModule?: number | null;
+    stringVocCold?: number | null;
+    stringVmpStc?: number | null;
+    notes?: string | null;
+  };
 }
 
 export interface CalculationResult {

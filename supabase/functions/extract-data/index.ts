@@ -145,16 +145,33 @@ CRITICAL GOVERNANCE RULES:
 4. Perform engineering calculations where applicable based on international standards (IEC 60364, IEC 62446, IEC 61215).
 
 EXTRACTION TASKS:
-1. **PV SYSTEM PARAMETERS**: moduleCount, inverterCount, stringCount, arrayCount, modulesPerString, totalCapacity (kWp), acCapacity (kW)
-2. **MAX DC VOLTAGE CALCULATION** (per IEC 62548): Voc_max = Voc_stc × [1 + (Tmin - 25) × TempCoef_Voc / 100] × modules_per_string
-3. **CABLE LENGTHS**: Return in METERS (convert from km if needed)
-4. **INVERTER SPECIFICATIONS**: model, ratedPower, maxDcVoltage, mpptVoltageMin/Max, maxInputCurrent, mpptCount, quantity
-5. **MODULE SPECIFICATIONS**: model, pmax, voc, vmp, isc, imp, tempCoeffVoc, tempCoeffPmax
-6. **BILL OF MATERIALS (BoM)**: List all equipment with category, description, quantity, unit, specification, source
-7. **BILL OF QUANTITIES (BoQ)**: Measured quantities
-8. **DRAWING LAYERS**: If CAD layer names are visible
-9. **TEXT LABELS**: Significant equipment labels
-10. **MISSING DATA**: For each field that cannot be extracted
+1. **PV SYSTEM PARAMETERS**:
+   - moduleCount
+   - inverterCount
+   - **stringCount** (total number of strings)
+   - arrayCount
+   - **modulesPerString** (series modules per string)
+   - **stringsPerMPPT** (parallel strings per inverter input / MPPT)
+   - totalCapacity (kWp), acCapacity (kW)
+
+2. **STRING ELECTRICAL CALCULATIONS** (only if all required inputs exist; otherwise set null + add missingData):
+   - Voc_STC (module)
+   - Vmp_STC (module)
+   - Isc (module)
+   - Imp (module)
+   - Voc_cold(module) using temperature coefficient and Tmin (if available)
+   - String Voc_cold = modulesPerString × Voc_cold(module)
+   - String Vmp_STC = modulesPerString × Vmp_STC(module)
+   - Array current estimate based on stringsPerMPPT / total strings (explicitly state assumptions)
+
+3. **MAX DC VOLTAGE CALCULATION** (per IEC 62548): Voc_max = Voc_stc × [1 + (Tmin - 25) × TempCoef_Voc / 100] × modulesPerString
+4. **CABLE LENGTHS**: Return in METERS (convert from km if needed)
+5. **INVERTER SPECIFICATIONS**: model, ratedPower, maxDcVoltage, mpptVoltageMin/Max, maxInputCurrent, mpptCount, quantity
+6. **MODULE SPECIFICATIONS**: model, pmax, voc, vmp, isc, imp, tempCoeffVoc, tempCoeffPmax
+7. **BILL OF MATERIALS (BoM)** and **BoQ** with source pointers where available
+8. **TRACEABILITY**: Every key scalar output MUST have an entry in trace.
+   Use dot-path keys like: pvParameters.stringCount, pvParameters.modulesPerString, pvParameters.stringsPerMPPT, pvParameters.maxVoltage, cableSummary.dcLength, etc.
+9. **MISSING DATA**: For each field that cannot be extracted, add missingData with reason + sourceHint.
 
 Return all data using the extract_pv_data tool.`;
 
@@ -207,12 +224,27 @@ Return all data using the extract_pv_data tool.`;
                     stringCount: { type: ["number", "null"] },
                     arrayCount: { type: ["number", "null"] },
                     modulesPerString: { type: ["number", "null"] },
+                    stringsPerMPPT: { type: ["number", "null"], description: "Parallel strings per inverter input/MPPT" },
                     maxVoltage: { type: ["number", "null"] },
                     maxVoltageCalculation: { type: ["string", "null"] },
                     totalCapacity: { type: ["number", "null"] },
                     acCapacity: { type: ["number", "null"] },
                   },
                   required: ["moduleCount", "inverterCount", "stringCount", "maxVoltage", "totalCapacity"],
+                  additionalProperties: false,
+                },
+                stringCalculations: {
+                  type: "object",
+                  properties: {
+                    vocStcModule: { type: ["number", "null"] },
+                    vmpStcModule: { type: ["number", "null"] },
+                    iscModule: { type: ["number", "null"] },
+                    impModule: { type: ["number", "null"] },
+                    vocColdModule: { type: ["number", "null"] },
+                    stringVocCold: { type: ["number", "null"] },
+                    stringVmpStc: { type: ["number", "null"] },
+                    notes: { type: ["string", "null"] },
+                  },
                   additionalProperties: false,
                 },
                 inverterSpecs: {
