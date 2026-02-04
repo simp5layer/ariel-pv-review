@@ -24,6 +24,7 @@ export interface UploadedFile {
   uploadedAt: Date;
   status: 'pending' | 'processing' | 'completed' | 'error';
   sourceReference?: string; // page number or cell reference
+  storagePath?: string; // path in Supabase storage
 }
 
 export interface Project {
