@@ -8,6 +8,8 @@ interface ProjectContextType {
   setCurrentProject: (project: Project | null) => void;
   projectHistory: Project[];
   addToHistory: (project: Project) => void;
+  deleteProjectFromHistory: (projectId: string) => void;
+  updateProjectInHistory: (project: Project) => void;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
   currentStep: number;
@@ -135,36 +137,8 @@ const mockFindings: ComplianceFinding[] = [
   }
 ];
 
-// Demo project history
-const demoProjectHistory: Project[] = [
-  {
-    id: 'proj-demo-1',
-    name: 'NEOM Solar Farm Phase 1',
-    location: 'NEOM, Saudi Arabia',
-    systemType: 'on-grid',
-    createdAt: new Date('2024-01-15'),
-    updatedAt: new Date('2024-01-20'),
-    status: 'completed',
-    files: [
-      { id: 'f1', name: 'PV-Layout-01.dwg', type: 'dwg', size: 2500000, uploadedAt: new Date(), status: 'completed' },
-      { id: 'f2', name: 'Electrical-Diagram.pdf', type: 'pdf', size: 1200000, uploadedAt: new Date(), status: 'completed' }
-    ],
-    standardFiles: []
-  },
-  {
-    id: 'proj-demo-2',
-    name: 'Riyadh Commercial Center',
-    location: 'Riyadh, Saudi Arabia',
-    systemType: 'hybrid',
-    createdAt: new Date('2024-02-01'),
-    updatedAt: new Date('2024-02-10'),
-    status: 'completed',
-    files: [
-      { id: 'f3', name: 'Site-Plan.dwg', type: 'dwg', size: 3200000, uploadedAt: new Date(), status: 'completed' }
-    ],
-    standardFiles: []
-  }
-];
+// Empty project history - data comes from database
+const demoProjectHistory: Project[] = [];
 
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
@@ -281,6 +255,14 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
   };
 
+  const deleteProjectFromHistory = (projectId: string) => {
+    setProjectHistory(prev => prev.filter(p => p.id !== projectId));
+  };
+
+  const updateProjectInHistory = (project: Project) => {
+    setProjectHistory(prev => prev.map(p => p.id === project.id ? project : p));
+  };
+
   const startNewProject = () => {
     setCurrentProject(null);
     setCurrentStep(0);
@@ -292,14 +274,11 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   const openProjectFromHistory = (project: Project) => {
     setCurrentProject(project);
-    // Determine the step based on project status
+    // Determine the step based on project status (3-step workflow now)
     switch (project.status) {
       case 'completed':
       case 'reviewing':
-        setCurrentStep(3);
-        break;
-      case 'standards':
-        setCurrentStep(2);
+        setCurrentStep(2); // Design Review is now step 2
         break;
       case 'analyzing':
         setCurrentStep(1);
@@ -376,6 +355,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         setCurrentProject,
         projectHistory,
         addToHistory,
+        deleteProjectFromHistory,
+        updateProjectInHistory,
         viewMode,
         setViewMode,
         currentStep,

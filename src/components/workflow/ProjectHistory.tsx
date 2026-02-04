@@ -1,15 +1,39 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Calendar, MapPin, FileText, CheckCircle, XCircle, Clock } from 'lucide-react';
+import { ArrowLeft, Calendar, MapPin, FileText, Clock, Trash2, Pencil } from 'lucide-react';
 import { Project } from '@/types/project';
 import { format } from 'date-fns';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 interface ProjectHistoryProps {
   projects: Project[];
   onBack: () => void;
   onSelectProject: (project: Project) => void;
+  onDeleteProject?: (projectId: string) => void;
+  onUpdateProject?: (project: Project) => void;
 }
 
 const getStatusBadge = (status: Project['status']) => {
@@ -36,7 +60,87 @@ const getSystemTypeBadge = (type: Project['systemType']) => {
   return <Badge variant="outline">{labels[type]}</Badge>;
 };
 
-const ProjectHistory: React.FC<ProjectHistoryProps> = ({ projects, onBack, onSelectProject }) => {
+const ProjectHistory: React.FC<ProjectHistoryProps> = ({ 
+  projects, 
+  onBack, 
+  onSelectProject,
+  onDeleteProject,
+  onUpdateProject 
+}) => {
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editLocation, setEditLocation] = useState('');
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+
+  const handleDeleteClick = (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    setSelectedProject(project);
+    setDeleteDialogOpen(true);
+  };
+
+  const handleEditClick = (e: React.MouseEvent, project: Project) => {
+    e.stopPropagation();
+    setSelectedProject(project);
+    setEditName(project.name);
+    setEditLocation(project.location);
+    setEditDialogOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!selectedProject) return;
+    setIsDeleting(true);
+    
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', selectedProject.id);
+      
+      if (error) throw error;
+      
+      toast.success('Project deleted successfully');
+      onDeleteProject?.(selectedProject.id);
+    } catch (error) {
+      console.error('Delete error:', error);
+      toast.error('Failed to delete project');
+    } finally {
+      setIsDeleting(false);
+      setDeleteDialogOpen(false);
+      setSelectedProject(null);
+    }
+  };
+
+  const confirmEdit = async () => {
+    if (!selectedProject) return;
+    setIsUpdating(true);
+    
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .update({ name: editName, location: editLocation })
+        .eq('id', selectedProject.id);
+      
+      if (error) throw error;
+      
+      toast.success('Project updated successfully');
+      onUpdateProject?.({
+        ...selectedProject,
+        name: editName,
+        location: editLocation
+      });
+    } catch (error) {
+      console.error('Update error:', error);
+      toast.error('Failed to update project');
+    } finally {
+      setIsUpdating(false);
+      setEditDialogOpen(false);
+      setSelectedProject(null);
+    }
+  };
+
   return (
     <div className="min-h-full bg-background engineering-grid py-8">
       <div className="max-w-4xl mx-auto px-6 space-y-6">
@@ -91,9 +195,27 @@ const ProjectHistory: React.FC<ProjectHistoryProps> = ({ projects, onBack, onSel
                       {format(new Date(project.createdAt), 'MMM d, yyyy')}
                     </span>
                   </div>
-                  <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity">
-                    Open Project →
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button 
+                      variant="ghost" 
+                      size="icon"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8"
+                      onClick={(e) => handleEditClick(e, project)}
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="icon"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity h-8 w-8 text-destructive hover:text-destructive"
+                      onClick={(e) => handleDeleteClick(e, project)}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                    <Button variant="ghost" size="sm" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                      Open Project →
+                    </Button>
+                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -113,6 +235,68 @@ const ProjectHistory: React.FC<ProjectHistoryProps> = ({ projects, onBack, onSel
           </Card>
         )}
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Project</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete "{selectedProject?.name}"? This action cannot be undone and will remove all associated files and data.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={confirmDelete} 
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Edit Dialog */}
+      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Project</DialogTitle>
+            <DialogDescription>
+              Update the project name and location.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="edit-name">Project Name</Label>
+              <Input
+                id="edit-name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="Enter project name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-location">Location</Label>
+              <Input
+                id="edit-location"
+                value={editLocation}
+                onChange={(e) => setEditLocation(e.target.value)}
+                placeholder="Enter location"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditDialogOpen(false)} disabled={isUpdating}>
+              Cancel
+            </Button>
+            <Button onClick={confirmEdit} disabled={isUpdating || !editName.trim()}>
+              {isUpdating ? 'Saving...' : 'Save Changes'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
