@@ -183,7 +183,7 @@ Please analyze these project files against ALL uploaded standards and provide a 
           { role: "user", content: userPrompt }
         ],
         temperature: 0.1,
-        max_tokens: 8000,
+        max_completion_tokens: 8000,
         response_format: { type: "json_object" }
       }),
     });
