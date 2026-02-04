@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { useProject } from '@/contexts/ProjectContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +16,7 @@ import SeverityBadge from '@/components/ui/SeverityBadge';
 import StatCard from '@/components/ui/StatCard';
 import DeliverablesPanel from './DeliverablesPanel';
 import { Deliverable, DeliverableType, DELIVERABLE_METADATA } from '@/types/project';
+import { useDeliverables } from '@/hooks/useDeliverables';
 import {
   ClipboardCheck,
   ArrowLeft,
@@ -53,18 +54,39 @@ const DesignReview: React.FC = () => {
     findings,
     submissions,
     isReviewing,
-    setIsReviewing,
     currentProject,
     extractedData,
     runComplianceReview
   } = useProject();
 
-  const deliverables: Deliverable[] = useMemo(() => {
+  const { generateMissingDeliverables, fetchDeliverables, isGenerating, progress: genProgress } = useDeliverables();
+  const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
+  const [submissionId, setSubmissionId] = useState<string | null>(null);
+
+  // Fetch deliverables when submissions change
+  const latestSubmission = submissions[submissions.length - 1];
+  
+  useEffect(() => {
+    if (latestSubmission?.id && latestSubmission.id !== submissionId) {
+      setSubmissionId(latestSubmission.id);
+      fetchDeliverables(latestSubmission.id).then(setDeliverables);
+    }
+  }, [latestSubmission?.id, submissionId, fetchDeliverables]);
+
+  // Build deliverables list combining fetched + computed status
+  const displayDeliverables: Deliverable[] = useMemo(() => {
     const now = new Date();
     const hasFindings = findings.length > 0;
     const hasBomBoq = Boolean((extractedData?.bom?.length || 0) + (extractedData?.boq?.length || 0));
+    const fetchedMap = new Map(deliverables.map(d => [d.type, d]));
 
     return deliverableOrder.map((type) => {
+      const fetched = fetchedMap.get(type);
+      if (fetched && fetched.status !== 'not_generated') {
+        return fetched;
+      }
+
+      // Fallback computed status
       let status: Deliverable['status'] = 'not_generated';
       if (type === 'bom_boq' && hasBomBoq) status = 'generated';
       if ((type === 'issue_register' || type === 'compliance_checklist') && hasFindings) status = 'generated';
@@ -79,7 +101,7 @@ const DesignReview: React.FC = () => {
         submissionNumber: submissions.length || undefined,
       };
     });
-  }, [extractedData?.bom, extractedData?.boq, findings.length, submissions.length]);
+  }, [extractedData?.bom, extractedData?.boq, findings.length, submissions.length, deliverables]);
 
   const handleRunReview = async () => {
     // Build project file content from extracted data for AI analysis
@@ -119,17 +141,33 @@ const DesignReview: React.FC = () => {
     }
   };
 
-  const handleGenerateMissing = () => {
-    toast.info('Automatic deliverable generation is not wired yet. Run Analyze & Extract + Run Design Review to populate data.');
-  };
+  const handleGenerateMissing = useCallback(async () => {
+    if (!currentProject) {
+      toast.error('No project selected');
+      return;
+    }
+    
+    const result = await generateMissingDeliverables(
+      currentProject.id,
+      findings,
+      extractedData,
+      submissionId || undefined
+    );
 
-  const handleRegenerateAll = () => {
-    toast.info('Regeneration is not wired yet.');
-  };
+    if (result && submissionId) {
+      // Refresh deliverables
+      const updated = await fetchDeliverables(submissionId);
+      setDeliverables(updated);
+    }
+  }, [currentProject, findings, extractedData, submissionId, generateMissingDeliverables, fetchDeliverables]);
 
-  const handleExportPackage = () => {
-    toast.info('Export package is not wired yet.');
-  };
+  const handleRegenerateAll = useCallback(() => {
+    toast.info('Regeneration will be available soon.');
+  }, []);
+
+  const handleExportPackage = useCallback(() => {
+    toast.info('Export package will be available soon.');
+  }, []);
 
   const criticalCount = findings.filter(f => f.severity === 'critical').length;
   const majorCount = findings.filter(f => f.severity === 'major').length;
@@ -137,14 +175,16 @@ const DesignReview: React.FC = () => {
   const passCount = findings.filter(f => f.severity === 'pass').length;
   const totalFindings = findings.length;
   
-  // Compliance is calculated as: passed checks / total checks
-  // Non-pass findings are issues that need fixing, pass findings are compliant checks
+  // ITRFFE-style compliance calculation:
+  // Critical (P0) = 15 points each, Major (P1) = 8 points each, Minor (P2) = 3 points each
+  // Max score = 100, deduct weighted issue points
   const issueCount = criticalCount + majorCount + minorCount;
+  const weightedDeduction = (criticalCount * 15) + (majorCount * 8) + (minorCount * 3);
   const compliancePercentage = totalFindings > 0 
-    ? Math.round((passCount / totalFindings) * 100) 
-    : 100; // 100% if no findings (nothing to check)
+    ? Math.max(0, Math.min(100, 100 - weightedDeduction))
+    : 100; // 100% if no findings
 
-  const latestSubmission = submissions[submissions.length - 1];
+  // latestSubmission already computed above
 
   return (
     <div className="min-h-full bg-background py-8">
@@ -571,11 +611,11 @@ const DesignReview: React.FC = () => {
             {/* Deliverables Sidebar */}
             <div className="lg:sticky lg:top-8 lg:self-start">
               <DeliverablesPanel
-                deliverables={deliverables}
+                deliverables={displayDeliverables}
                 onGenerateMissing={handleGenerateMissing}
                 onRegenerateAll={handleRegenerateAll}
                 onExportPackage={handleExportPackage}
-                isGenerating={false}
+                isGenerating={isGenerating}
                 submissionNumber={submissions.length}
               />
             </div>

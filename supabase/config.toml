@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.extract-data]
 verify_jwt = false
+
+[functions.generate-deliverables]
+verify_jwt = false
