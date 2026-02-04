@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 
 interface StandardsLibraryProps {
   onBack: () => void;
@@ -36,7 +37,7 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
 
   // Accepted file types for standards documents
   const acceptedTypes = [
-    '.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', // Documents
+    '.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', '.md', '.json', '.xml', '.yaml', '.yml', // Text / docs
     '.xls', '.xlsx', '.csv', // Spreadsheets
     '.ppt', '.pptx', // Presentations
   ];
@@ -46,6 +47,12 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
     'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'text/plain',
+    'text/markdown',
+    'application/json',
+    'application/xml',
+    'text/xml',
+    'application/x-yaml',
+    'text/yaml',
     'application/rtf',
     'application/vnd.oasis.opendocument.text',
     'application/vnd.ms-excel',
@@ -65,6 +72,7 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
     });
     
     if (validFiles.length === 0) {
+      toast.error('Unsupported file type. Please upload PDF, Word, Excel, or text documents.');
       return;
     }
 
@@ -170,7 +178,7 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.xls,.xlsx,.csv,.ppt,.pptx"
+                accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.md,.json,.xml,.yaml,.yml,.xls,.xlsx,.csv,.ppt,.pptx"
                 onChange={(e) => handleFilesSelected(e.target.files)}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 disabled={isUploading}
@@ -191,7 +199,7 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
                     {isUploading ? 'Uploading...' : 'Upload standard documents'}
                   </p>
                   <p className="text-sm text-muted-foreground mt-1">
-                    PDF, Word, Excel, Text files - drag and drop or click to browse
+                    PDF, Word, Excel, Text/Markdown files - drag and drop or click to browse
                   </p>
                 </div>
               </div>
