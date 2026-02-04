@@ -1,5 +1,7 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
-import { Project, UploadedFile, ExtractedData, ComplianceFinding, Submission, Deliverable, DeliverableType, StandardDocument } from '@/types/project';
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { Project, UploadedFile, ExtractedData, ComplianceFinding, Submission, Deliverable, DeliverableType, StandardDocument, SystemType } from '@/types/project';
+import { supabase } from '@/integrations/supabase/client';
+import { useAuth } from '@/contexts/AuthContext';
 
 type ViewMode = 'landing' | 'workflow' | 'history' | 'standards';
 
@@ -29,16 +31,16 @@ interface ProjectContextType {
   startNewProject: () => void;
   openProjectFromHistory: (project: Project) => void;
   runComplianceReview: (projectFiles: { name: string; content: string }[]) => Promise<void>;
+  refreshProjectHistory: () => Promise<void>;
+  isLoadingHistory: boolean;
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
-// Empty project history - data comes from database
-const demoProjectHistory: Project[] = [];
-
 export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
-  const [projectHistory, setProjectHistory] = useState<Project[]>(demoProjectHistory);
+  const [projectHistory, setProjectHistory] = useState<Project[]>([]);
   const [viewMode, setViewMode] = useState<ViewMode>('landing');
   const [currentStep, setCurrentStep] = useState(0);
   const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
@@ -46,6 +48,62 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+
+  // Load project history from database
+  const refreshProjectHistory = useCallback(async () => {
+    if (!user) {
+      setProjectHistory([]);
+      return;
+    }
+
+    setIsLoadingHistory(true);
+    try {
+      const { data: projectsData, error } = await supabase
+        .from('projects')
+        .select(`
+          *,
+          project_files (*)
+        `)
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        console.error('Error loading projects:', error);
+        return;
+      }
+
+      const projects: Project[] = (projectsData || []).map(p => ({
+        id: p.id,
+        name: p.name,
+        location: p.location,
+        systemType: p.system_type as SystemType,
+        createdAt: new Date(p.created_at),
+        updatedAt: new Date(p.updated_at),
+        status: p.status as Project['status'],
+        files: (p.project_files || []).map((f: any) => ({
+          id: f.id,
+          name: f.name,
+          type: f.file_type,
+          size: f.size,
+          uploadedAt: new Date(f.uploaded_at),
+          status: f.status,
+          storagePath: f.storage_path
+        })),
+        standardFiles: []
+      }));
+
+      setProjectHistory(projects);
+    } catch (err) {
+      console.error('Failed to load project history:', err);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [user]);
+
+  // Load history on mount and when user changes
+  useEffect(() => {
+    refreshProjectHistory();
+  }, [refreshProjectHistory]);
 
   // Poll for job completion
   const pollJobStatus = async (
@@ -173,10 +231,14 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
       }
       return [project, ...prev];
     });
+    // Refresh from database to stay in sync
+    refreshProjectHistory();
   };
 
   const deleteProjectFromHistory = (projectId: string) => {
     setProjectHistory(prev => prev.filter(p => p.id !== projectId));
+    // Refresh from database to stay in sync
+    refreshProjectHistory();
   };
 
   const updateProjectInHistory = (project: Project) => {
@@ -258,7 +320,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         addStandardFile,
         startNewProject,
         openProjectFromHistory,
-        runComplianceReview
+        runComplianceReview,
+        refreshProjectHistory,
+        isLoadingHistory
       }}
     >
       {children}
