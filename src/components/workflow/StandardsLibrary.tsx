@@ -2,14 +2,6 @@ import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   Table,
   TableBody,
@@ -25,26 +17,10 @@ import {
   ArrowLeft, 
   Trash2, 
   Shield, 
-  Scale, 
   FileText, 
-  Building,
-  Zap,
-  Globe,
   Search
 } from 'lucide-react';
 import { format } from 'date-fns';
-
-const standardCategories = [
-  { value: 'IEC', label: 'IEC Standards', icon: Globe, description: 'International Electrotechnical Commission' },
-  { value: 'SEC', label: 'SEC Standards', icon: Zap, description: 'Saudi Electricity Company' },
-  { value: 'SBC', label: 'SBC Standards', icon: Building, description: 'Saudi Building Code' },
-  { value: 'SASO', label: 'SASO Standards', icon: Shield, description: 'Saudi Standards Organization' },
-  { value: 'MOMRA', label: 'MOMRA Requirements', icon: Building, description: 'Ministry of Municipal & Rural Affairs' },
-  { value: 'SERA', label: 'SERA Grid Codes', icon: Zap, description: 'Saudi Electricity Regulatory Authority' },
-  { value: 'WERA', label: 'WERA Regulations', icon: Scale, description: 'Water & Electricity Regulatory Authority' },
-  { value: 'NEC', label: 'NEC Standards', icon: FileText, description: 'National Electrical Code' },
-  { value: 'OTHER', label: 'Other Standards', icon: FileText, description: 'Manufacturer specs, project-specific' },
-] as const;
 
 interface StandardsLibraryProps {
   onBack: () => void;
@@ -82,38 +58,18 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
     }
   ]);
   
-  const [selectedCategory, setSelectedCategory] = useState<string>('');
-  const [standardName, setStandardName] = useState('');
-  const [standardVersion, setStandardVersion] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
 
   const handleFilesAdded = (files: UploadedFile[]) => {
-    setPendingFiles([...pendingFiles, ...files]);
-  };
-
-  const handleFileRemove = (fileId: string) => {
-    setPendingFiles(pendingFiles.filter(f => f.id !== fileId));
-  };
-
-  const handleAddStandard = () => {
-    if (!selectedCategory || !standardName.trim() || pendingFiles.length === 0) return;
-
-    const newStandards: StandardDocument[] = pendingFiles.map((file, index) => ({
+    const newStandards: StandardDocument[] = files.map((file, index) => ({
       id: `std-${Date.now()}-${index}`,
-      name: standardName,
-      version: standardVersion || undefined,
-      category: selectedCategory as StandardDocument['category'],
+      name: file.name.replace(/\.[^/.]+$/, ''), // Use filename without extension as name
+      category: 'OTHER' as StandardDocument['category'],
       uploadedAt: new Date(),
       file: { ...file, type: 'pdf' as const },
       isGlobal: true
     }));
-
     setStandards([...standards, ...newStandards]);
-    setSelectedCategory('');
-    setStandardName('');
-    setStandardVersion('');
-    setPendingFiles([]);
   };
 
   const handleDeleteStandard = (id: string) => {
@@ -122,18 +78,8 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
 
   const filteredStandards = standards.filter(s => 
     s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    s.category.toLowerCase().includes(searchQuery.toLowerCase())
+    s.file.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  const getCategoryIcon = (category: string) => {
-    const cat = standardCategories.find(c => c.value === category);
-    return cat ? cat.icon : FileText;
-  };
-
-  const getCategoryLabel = (category: string) => {
-    const cat = standardCategories.find(c => c.value === category);
-    return cat ? cat.label : category;
-  };
 
   return (
     <div className="min-h-full bg-background py-8">
@@ -155,91 +101,34 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
           </Button>
         </div>
 
-        {/* Category Overview */}
-        <div className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
-          {standardCategories.slice(0, 5).map((cat) => {
-            const Icon = cat.icon;
-            const count = standards.filter(s => s.category === cat.value).length;
-            return (
-              <Card key={cat.value} className="group hover:border-primary/50 transition-colors">
-                <CardContent className="p-4 flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-                    <Icon className="w-5 h-5 text-primary" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-sm">{cat.value}</p>
-                    <p className="text-xs text-muted-foreground">{count} document{count !== 1 ? 's' : ''}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
+        {/* Stats Card */}
+        <Card className="group hover:border-primary/50 transition-colors">
+          <CardContent className="p-4 flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+              <FileText className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <p className="font-semibold text-sm">Total Standards</p>
+              <p className="text-xs text-muted-foreground">{standards.length} document{standards.length !== 1 ? 's' : ''}</p>
+            </div>
+          </CardContent>
+        </Card>
 
-        {/* Add New Standard */}
+        {/* Upload Standards */}
         <Card>
           <CardHeader>
-            <CardTitle>Add New Standard</CardTitle>
+            <CardTitle>Upload Standards</CardTitle>
             <CardDescription>
-              Upload standards documents to the global library for use across all projects
+              Upload international or national standards documents for use across all projects
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-2">
-                <Label>Standard Category *</Label>
-                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {standardCategories.map((cat) => (
-                      <SelectItem key={cat.value} value={cat.value}>
-                        <div className="flex items-center gap-2">
-                          <cat.icon className="w-4 h-4" />
-                          {cat.label}
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Standard Name *</Label>
-                <Input
-                  placeholder="e.g., IEC 62548:2016"
-                  value={standardName}
-                  onChange={(e) => setStandardName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Version/Date</Label>
-                <Input
-                  placeholder="e.g., 2023 or Rev. 3"
-                  value={standardVersion}
-                  onChange={(e) => setStandardVersion(e.target.value)}
-                />
-              </div>
-            </div>
-
+          <CardContent>
             <FileUploadZone
               onFilesAdded={handleFilesAdded}
               acceptedTypes={['.pdf']}
-              existingFiles={pendingFiles}
-              onFileRemove={handleFileRemove}
               label="Upload standard documents"
-              description="PDF files only"
+              description="PDF files only - drag and drop or click to browse"
             />
-
-            <div className="flex justify-end">
-              <Button 
-                onClick={handleAddStandard}
-                disabled={!selectedCategory || !standardName.trim() || pendingFiles.length === 0}
-                className="gap-2"
-              >
-                Add to Library
-              </Button>
-            </div>
           </CardContent>
         </Card>
 
@@ -264,50 +153,39 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
               <Table>
                 <TableHeader>
                   <TableRow className="bg-muted/50">
-                    <TableHead className="w-[100px]">Category</TableHead>
-                    <TableHead>Standard Name</TableHead>
-                    <TableHead className="w-[100px]">Version</TableHead>
+                    <TableHead>Document Name</TableHead>
                     <TableHead className="w-[150px]">Uploaded</TableHead>
-                    <TableHead className="w-[200px]">File</TableHead>
+                    <TableHead className="w-[100px]">Size</TableHead>
                     <TableHead className="w-[80px]">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredStandards.map((standard) => {
-                    const Icon = getCategoryIcon(standard.category);
-                    return (
-                      <TableRow key={standard.id} className="hover:bg-muted/30">
-                        <TableCell>
-                          <div className="flex items-center gap-2">
-                            <Icon className="w-4 h-4 text-primary" />
-                            <span className="font-mono text-xs">{standard.category}</span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="font-medium">{standard.name}</TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {standard.version || '-'}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground text-sm">
-                          {format(standard.uploadedAt, 'PP')}
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-sm text-muted-foreground truncate block max-w-[180px]">
-                            {standard.file.name}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleDeleteStandard(standard.id)}
-                            className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
+                  {filteredStandards.map((standard) => (
+                    <TableRow key={standard.id} className="hover:bg-muted/30">
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <FileText className="w-4 h-4 text-primary" />
+                          <span className="font-medium">{standard.file.name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {format(standard.uploadedAt, 'PP')}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-sm">
+                        {(standard.file.size / (1024 * 1024)).toFixed(1)} MB
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteStandard(standard.id)}
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
                   {filteredStandards.length === 0 && (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
