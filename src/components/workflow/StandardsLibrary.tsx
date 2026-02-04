@@ -34,18 +34,41 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Accepted file types for standards documents
+  const acceptedTypes = [
+    '.pdf', '.doc', '.docx', '.txt', '.rtf', '.odt', // Documents
+    '.xls', '.xlsx', '.csv', // Spreadsheets
+    '.ppt', '.pptx', // Presentations
+  ];
+  
+  const acceptedMimeTypes = [
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'text/plain',
+    'application/rtf',
+    'application/vnd.oasis.opendocument.text',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'text/csv',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  ];
+
   const handleFilesSelected = async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     
-    const pdfFiles = Array.from(files).filter(f => 
-      f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')
-    );
+    // Filter to accepted document types
+    const validFiles = Array.from(files).filter(f => {
+      const ext = '.' + f.name.split('.').pop()?.toLowerCase();
+      return acceptedTypes.includes(ext) || acceptedMimeTypes.includes(f.type);
+    });
     
-    if (pdfFiles.length === 0) {
+    if (validFiles.length === 0) {
       return;
     }
 
-    await uploadStandards(pdfFiles);
+    await uploadStandards(validFiles);
     
     // Reset file input
     if (fileInputRef.current) {
@@ -147,7 +170,7 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf"
+                accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.xls,.xlsx,.csv,.ppt,.pptx"
                 onChange={(e) => handleFilesSelected(e.target.files)}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 disabled={isUploading}
@@ -168,7 +191,7 @@ const StandardsLibrary: React.FC<StandardsLibraryProps> = ({ onBack }) => {
                     {isUploading ? 'Uploading...' : 'Upload standard documents'}
                   </p>
                   <p className="text-sm text-muted-foreground mt-1">
-                    PDF files only - drag and drop or click to browse
+                    PDF, Word, Excel, Text files - drag and drop or click to browse
                   </p>
                 </div>
               </div>
