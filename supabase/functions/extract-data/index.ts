@@ -10,7 +10,6 @@ const corsHeaders = {
 
 type RequestBody = {
   projectId: string;
-  // backward-compat (ignored): previous client sent { files: [...] }
   files?: unknown;
 };
 
@@ -21,20 +20,25 @@ const json = (body: unknown, status = 200) =>
   });
 
 async function extractPdfText(data: Uint8Array): Promise<string> {
-  const doc = await getDocument({ data, useSystemFonts: true }).promise;
-  const maxPages = Math.min(doc.numPages, 50);
-  const chunks: string[] = [];
-  for (let i = 1; i <= maxPages; i++) {
-    const page = await doc.getPage(i);
-    const textContent = await page.getTextContent();
-    const pageText = (textContent.items as any[])
-      .map((it) => (typeof it?.str === "string" ? it.str : ""))
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (pageText) chunks.push(`[Page ${i}] ${pageText}`);
+  try {
+    const doc = await getDocument({ data, useSystemFonts: true }).promise;
+    const maxPages = Math.min(doc.numPages, 50);
+    const chunks: string[] = [];
+    for (let i = 1; i <= maxPages; i++) {
+      const page = await doc.getPage(i);
+      const textContent = await page.getTextContent();
+      const pageText = (textContent.items as any[])
+        .map((it) => (typeof it?.str === "string" ? it.str : ""))
+        .join(" ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (pageText) chunks.push(`[Page ${i}] ${pageText}`);
+    }
+    return chunks.join("\n");
+  } catch (err) {
+    console.error("PDF extraction error:", err);
+    return "";
   }
-  return chunks.join("\n");
 }
 
 serve(async (req) => {
@@ -123,7 +127,6 @@ serve(async (req) => {
           extractionStatus: text ? "ok" : "no_text",
         });
       } else if (type === "excel") {
-        // We don't parse XLSX in this iteration; still provide a placeholder so the model can ask for missing fields.
         fileContexts.push({
           name,
           type,
@@ -144,22 +147,88 @@ serve(async (req) => {
 
     const totalTextChars = fileContexts.reduce((acc, f) => acc + (f.extractedText?.length ?? 0), 0);
 
-    const systemPrompt = `You are GPT-5.2 acting as a PV design engineer.
+    // Enhanced system prompt with comprehensive extraction instructions
+    const systemPrompt = `You are GPT-5.2, acting as a senior PV design engineer conducting a comprehensive design review and data extraction.
 
-CRITICAL GOVERNANCE:
-- Do NOT guess or estimate. If a value is not explicitly present in the files, output it as null and add it to missingData with a clear reason.
-- Every extracted numeric value must have traceability (source file + page/cell reference) in the trace object.
-- If a PDF has no extractable text, say so in notes and request the missing input (DWG, native CAD export, or a text-based PDF).
+CRITICAL GOVERNANCE RULES:
+1. Extract ONLY data explicitly present in the uploaded files - never guess or estimate.
+2. If a value cannot be extracted, set it to null and add an entry to missingData with a clear reason and sourceHint.
+3. Every extracted numeric value MUST have traceability (source file + page/cell reference) in the trace object.
+4. Perform engineering calculations where applicable based on international standards (IEC 60364, IEC 62446, IEC 61215).
 
-TASK:
-Extract PV system quantities and key parameters so the UI can show:
-- Bill of Materials (BoM)
-- Bill of Quantities (BoQ)
-- Module count, inverter count, string count, array count (if available)
-- DC cable length (m) and AC cable length (m)
-- Maximum DC voltage (V)
+EXTRACTION TASKS:
 
-Return structured data ONLY via the provided tool call.`;
+1. **PV SYSTEM PARAMETERS** - Extract with full detail:
+   - moduleCount: Total number of PV modules
+   - inverterCount: Number of inverters
+   - stringCount: Calculate from (total modules / modules per string) OR extract if stated
+   - arrayCount: Number of PV arrays or sub-arrays
+   - modulesPerString: How many modules in each string
+   - totalCapacity: DC capacity in kWp (moduleCount × module Wp / 1000)
+   - acCapacity: Total AC inverter capacity in kW
+
+2. **MAX DC VOLTAGE CALCULATION** (per IEC 62548 / NEC 690):
+   - Extract module Voc from datasheet
+   - Apply temperature correction: Voc_max = Voc_stc × [1 + (Tmin - 25) × TempCoef_Voc / 100]
+   - Multiply by modules per string: String_Voc_max = Voc_max × modules_per_string
+   - If Tmin not available, use -10°C for Saudi Arabia / hot climates, -40°C for cold climates
+   - Return the calculated maxDcVoltage and show the formula used
+
+3. **CABLE LENGTHS** - Return in METERS (convert from any unit found):
+   - dcCableLength: Total DC cable length in meters
+   - acCableLength: Total AC cable length in meters
+   - If lengths given in km, multiply by 1000
+   - If not found, set to null and explain in missingData
+
+4. **INVERTER SPECIFICATIONS** - For each inverter type found:
+   - model: Manufacturer and model
+   - ratedPower: AC power rating in kW
+   - maxDcVoltage: Maximum DC input voltage
+   - mpptVoltageMin: MPPT minimum voltage
+   - mpptVoltageMax: MPPT maximum voltage
+   - maxInputCurrent: Maximum DC input current per MPPT
+   - mpptCount: Number of MPPT channels
+   - quantity: How many of this inverter type
+
+5. **MODULE SPECIFICATIONS** - Extract:
+   - model: Manufacturer and model
+   - pmax: Peak power in Wp
+   - voc: Open circuit voltage
+   - vmp: Maximum power voltage
+   - isc: Short circuit current
+   - imp: Maximum power current
+   - tempCoeffVoc: Temperature coefficient of Voc (%/°C)
+   - tempCoeffPmax: Temperature coefficient of Pmax (%/°C)
+
+6. **BILL OF MATERIALS (BoM)** - List all equipment with:
+   - category: Equipment category (Modules, Inverters, Cables, Switchgear, Protection, Mounting, etc.)
+   - description: Item description
+   - quantity: Count (null if not determinable)
+   - unit: Unit of measure (ea, m, set, etc.)
+   - specification: Technical specs as found
+   - source: { sourceFile, sourceReference }
+
+7. **BILL OF QUANTITIES (BoQ)** - Measured quantities:
+   - System capacities (kWp, kW)
+   - Cable lengths and sizes
+   - Number of strings, arrays
+   - Any other measurable quantities
+
+8. **DRAWING LAYERS** - If CAD layer names are visible, list them
+
+9. **TEXT LABELS** - Extract significant equipment labels, panel names, cable tags
+
+10. **MISSING DATA** - For each field that cannot be extracted:
+    - field: The parameter name
+    - reason: Why it couldn't be extracted
+    - sourceHint: What document/input would provide this data
+
+11. **ENGINEERING NOTES** - Add observations about:
+    - Document type (SLD, layout, datasheet, etc.)
+    - Data quality observations
+    - Potential compliance concerns noticed
+
+Return all data using the extract_pv_data tool.`;
 
     // Limit per-file text so prompts don't explode
     const MAX_PER_FILE = 80_000;
@@ -171,7 +240,7 @@ Return structured data ONLY via the provided tool call.`;
       })
       .join("\n\n");
 
-    const userPrompt = `PROJECT FILES (${projectFiles.length})\nTotal extracted text characters: ${totalTextChars}\n\n${filesForPrompt}`;
+    const userPrompt = `PROJECT FILES (${projectFiles.length})\nTotal extracted text characters: ${totalTextChars}\n\n${filesForPrompt}\n\nAnalyze all files and extract comprehensive PV system data. Calculate max DC voltage if module specs are available. All cable lengths must be in METERS.`;
 
     const body: any = {
       model: "openai/gpt-5.2",
@@ -184,7 +253,7 @@ Return structured data ONLY via the provided tool call.`;
           type: "function",
           function: {
             name: "extract_pv_data",
-            description: "Return extracted PV design quantities, BOM/BOQ, and traceability pointers.",
+            description: "Return extracted PV design quantities, BOM/BOQ, inverter/module specs, and traceability pointers.",
             parameters: {
               type: "object",
               properties: {
@@ -193,8 +262,10 @@ Return structured data ONLY via the provided tool call.`;
                 cableSummary: {
                   type: "object",
                   properties: {
-                    dcLength: { type: ["number", "null"] },
-                    acLength: { type: ["number", "null"] },
+                    dcLength: { type: ["number", "null"], description: "DC cable length in meters" },
+                    acLength: { type: ["number", "null"], description: "AC cable length in meters" },
+                    dcCableSpec: { type: ["string", "null"], description: "DC cable specification" },
+                    acCableSpec: { type: ["string", "null"], description: "AC cable specification" },
                   },
                   required: ["dcLength", "acLength"],
                   additionalProperties: false,
@@ -204,12 +275,67 @@ Return structured data ONLY via the provided tool call.`;
                   properties: {
                     moduleCount: { type: ["number", "null"] },
                     inverterCount: { type: ["number", "null"] },
-                    stringCount: { type: ["number", "null"] },
+                    stringCount: { type: ["number", "null"], description: "Number of strings (calculated or extracted)" },
                     arrayCount: { type: ["number", "null"] },
-                    maxVoltage: { type: ["number", "null"] },
-                    totalCapacity: { type: ["number", "null"] },
+                    modulesPerString: { type: ["number", "null"], description: "Modules per string" },
+                    maxVoltage: { type: ["number", "null"], description: "Max DC voltage in V (calculated per IEC standards)" },
+                    maxVoltageCalculation: { type: ["string", "null"], description: "Formula used for max voltage calculation" },
+                    totalCapacity: { type: ["number", "null"], description: "DC capacity in kWp" },
+                    acCapacity: { type: ["number", "null"], description: "AC capacity in kW" },
                   },
                   required: ["moduleCount", "inverterCount", "stringCount", "maxVoltage", "totalCapacity"],
+                  additionalProperties: false,
+                },
+                inverterSpecs: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      model: { type: ["string", "null"] },
+                      manufacturer: { type: ["string", "null"] },
+                      ratedPower: { type: ["number", "null"], description: "AC power in kW" },
+                      maxDcVoltage: { type: ["number", "null"] },
+                      mpptVoltageMin: { type: ["number", "null"] },
+                      mpptVoltageMax: { type: ["number", "null"] },
+                      maxInputCurrent: { type: ["number", "null"] },
+                      mpptCount: { type: ["number", "null"] },
+                      quantity: { type: ["number", "null"] },
+                      source: {
+                        type: "object",
+                        properties: {
+                          sourceFile: { type: "string" },
+                          sourceReference: { type: "string" },
+                        },
+                        required: ["sourceFile", "sourceReference"],
+                        additionalProperties: false,
+                      },
+                    },
+                    required: ["ratedPower", "quantity"],
+                    additionalProperties: false,
+                  },
+                },
+                moduleSpecs: {
+                  type: "object",
+                  properties: {
+                    model: { type: ["string", "null"] },
+                    manufacturer: { type: ["string", "null"] },
+                    pmax: { type: ["number", "null"], description: "Peak power in Wp" },
+                    voc: { type: ["number", "null"], description: "Open circuit voltage" },
+                    vmp: { type: ["number", "null"], description: "Max power voltage" },
+                    isc: { type: ["number", "null"], description: "Short circuit current" },
+                    imp: { type: ["number", "null"], description: "Max power current" },
+                    tempCoeffVoc: { type: ["number", "null"], description: "Temp coeff Voc in %/°C" },
+                    tempCoeffPmax: { type: ["number", "null"], description: "Temp coeff Pmax in %/°C" },
+                    source: {
+                      type: "object",
+                      properties: {
+                        sourceFile: { type: "string" },
+                        sourceReference: { type: "string" },
+                      },
+                      required: ["sourceFile", "sourceReference"],
+                      additionalProperties: false,
+                    },
+                  },
                   additionalProperties: false,
                 },
                 bom: {
@@ -332,7 +458,7 @@ Return structured data ONLY via the provided tool call.`;
       return json({ error: "Invalid AI response format" }, 500);
     }
 
-    // Persist to extracted_data table (best-effort, no schema changes)
+    // Persist to extracted_data table (best-effort)
     try {
       const payload = {
         project_id: projectId,
@@ -340,8 +466,8 @@ Return structured data ONLY via the provided tool call.`;
         text_labels: extractedData.textLabels ?? [],
         cable_summary: extractedData.cableSummary ?? {},
         pv_parameters: extractedData.pvParameters ?? {},
-        module_parameters: extractedData.moduleParameters ?? null,
-        inverter_parameters: extractedData.inverterParameters ?? null,
+        module_parameters: extractedData.moduleSpecs ?? null,
+        inverter_parameters: extractedData.inverterSpecs ?? null,
         updated_at: new Date().toISOString(),
       };
 
@@ -360,7 +486,7 @@ Return structured data ONLY via the provided tool call.`;
       console.error("Persist extracted_data failed:", persistErr);
     }
 
-    // Log prompt/response for audit (best-effort)
+    // Log prompt/response for audit
     try {
       const tokensUsed = aiResult.usage?.total_tokens ?? null;
       await supabase.from("ai_prompt_logs").insert({
