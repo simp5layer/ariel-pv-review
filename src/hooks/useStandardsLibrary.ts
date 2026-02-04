@@ -15,8 +15,90 @@ export interface StandardRecord {
   isGlobal: boolean;
 }
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Storage object keys can be picky (unicode/commas/etc). Keep DB file_name as-is,
+ * but sanitize the storage path segment so uploads don't fail with InvalidKey.
+ */
+const sanitizeStorageFilename = (originalName: string) => {
+  const ext = originalName.split('.').pop()?.toLowerCase();
+  const base = originalName.replace(/\.[^/.]+$/, '');
+
+  // Normalize, strip diacritics, replace non-safe chars.
+  const safeBase = base
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^[-.]+|[-.]+$/g, '')
+    .slice(0, 120);
+
+  const finalBase = safeBase || 'standard';
+  return ext ? `${finalBase}.${ext}` : finalBase;
+};
+
+async function uploadToStandardsBucket(params: {
+  objectPath: string;
+  file: File;
+  accessToken: string;
+}): Promise<void> {
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/standards/${params.objectPath}`;
+  const formData = new FormData();
+  formData.append('cacheControl', '3600');
+  // Supabase storage accepts a file with an empty field name in browser form uploads.
+  formData.append('', params.file);
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${params.accessToken}`,
+      'x-upsert': 'false',
+    },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    let message = `Upload failed (${res.status})`;
+    try {
+      const json = await res.json();
+      message = json?.message || json?.error || message;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+}
+
+async function deleteFromStandardsBucket(params: {
+  objectPath: string;
+  accessToken: string;
+}): Promise<void> {
+  const url = `${import.meta.env.VITE_SUPABASE_URL}/storage/v1/object/standards/${params.objectPath}`;
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: {
+      apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+      Authorization: `Bearer ${params.accessToken}`,
+    },
+  });
+
+  // DELETE is idempotent; treat 404 as success.
+  if (!res.ok && res.status !== 404) {
+    let message = `Delete failed (${res.status})`;
+    try {
+      const json = await res.json();
+      message = json?.message || json?.error || message;
+    } catch {
+      // ignore
+    }
+    throw new Error(message);
+  }
+}
+
 export function useStandardsLibrary() {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
   const [standards, setStandards] = useState<StandardRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
@@ -65,7 +147,7 @@ export function useStandardsLibrary() {
 
   // Upload a file to storage and create database record
   const uploadStandard = async (file: File): Promise<StandardRecord | null> => {
-    if (!user) {
+    if (!user || !session?.access_token) {
       toast.error('You must be logged in to upload standards');
       return null;
     }
@@ -73,19 +155,23 @@ export function useStandardsLibrary() {
     setIsUploading(true);
 
     try {
+      // Enforce the platform limit early to avoid long hangs.
+      const maxBytes = 20 * 1024 * 1024;
+      if (file.size > maxBytes) {
+        toast.error(`File too large (max 20MB): ${file.name}`);
+        return null;
+      }
+
       // Create unique storage path
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${user.id}/${Date.now()}-${file.name}`;
+      const safeName = sanitizeStorageFilename(file.name);
+      const objectPath = `${user.id}/${Date.now()}-${safeName}`;
 
-      // Upload to storage bucket
-      const { error: uploadError } = await supabase.storage
-        .from('standards')
-        .upload(fileName, file, {
-          cacheControl: '3600',
-          upsert: false,
-        });
-
-      if (uploadError) throw uploadError;
+      // Upload to storage bucket (REST with explicit access token to avoid anon uploads)
+      await uploadToStandardsBucket({
+        objectPath,
+        file,
+        accessToken: session.access_token,
+      });
 
       // Create database record
       const { data, error: dbError } = await supabase
@@ -95,7 +181,7 @@ export function useStandardsLibrary() {
           name: file.name.replace(/\.[^/.]+$/, ''), // Remove extension for name
           file_name: file.name,
           file_size: file.size,
-          storage_path: fileName,
+          storage_path: objectPath,
           category: 'OTHER' as const,
           is_global: true,
         })
@@ -130,14 +216,24 @@ export function useStandardsLibrary() {
 
   // Upload multiple files
   const uploadStandards = async (files: File[]): Promise<void> => {
-    for (const file of files) {
-      await uploadStandard(file);
+    // Sequential + small yield keeps UI responsive and reduces request bursts.
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+
+      // simple retry once (handles transient network/auth refresh timing)
+      const first = await uploadStandard(file);
+      if (!first) {
+        await sleep(250);
+        await uploadStandard(file);
+      }
+
+      await sleep(50);
     }
   };
 
   // Delete a standard
   const deleteStandard = async (id: string): Promise<boolean> => {
-    if (!user) {
+    if (!user || !session?.access_token) {
       toast.error('You must be logged in to delete standards');
       return false;
     }
@@ -147,12 +243,12 @@ export function useStandardsLibrary() {
       const standard = standards.find((s) => s.id === id);
       
       if (standard?.storagePath) {
-        // Delete from storage
-        const { error: storageError } = await supabase.storage
-          .from('standards')
-          .remove([standard.storagePath]);
-
-        if (storageError) {
+        try {
+          await deleteFromStandardsBucket({
+            objectPath: standard.storagePath,
+            accessToken: session.access_token,
+          });
+        } catch (storageError) {
           console.warn('Storage deletion error:', storageError);
         }
       }
