@@ -200,9 +200,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
           : 100;
         const compliancePercentage = resultData.compliancePercentage ?? calculatedCompliance;
         
+        // Use the real submission ID from the backend if available
+        const realSubmissionId: string | undefined = resultData.submissionId;
+        
         const newSubmission: Submission = {
-          id: `SUB-${Date.now()}`,
-          submittedBy: 'Engineer User',
+          id: realSubmissionId || crypto.randomUUID(),
+          submittedBy: user?.email || 'Engineer User',
           submittedAt: new Date(),
           completedAt: new Date(),
           status: compliancePercentage >= 80 ? 'passed' : 'failed',

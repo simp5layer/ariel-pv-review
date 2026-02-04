@@ -7,6 +7,7 @@ import { Deliverable, DeliverableType, ComplianceFinding, ExtractedData } from '
 interface GenerationResult {
   generated: DeliverableType[];
   totalGenerated: number;
+  submissionId?: string;
 }
 
 const POLL_INTERVAL = 2000;
@@ -79,18 +80,20 @@ export function useDeliverables() {
       });
 
       if (fnError) {
-        throw new Error(fnError.message);
+        console.error('Edge function invocation error:', fnError);
+        throw new Error(fnError.message || 'Failed to invoke generate-deliverables');
       }
 
-      if (data.error) {
+      if (data?.error) {
+        console.error('Edge function returned error:', data.error);
         throw new Error(data.error);
       }
 
-      if (data.jobId) {
+      if (data?.jobId) {
         toast.info('Generating deliverables. This may take a moment...');
         const result = await pollJobStatus(data.jobId);
         toast.success(`Generated ${result?.totalGenerated || 0} deliverables`);
-        return result;
+        return { ...result, submissionId: data.submissionId };
       }
 
       return null;

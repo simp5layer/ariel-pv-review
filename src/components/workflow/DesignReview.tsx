@@ -147,17 +147,24 @@ const DesignReview: React.FC = () => {
       return;
     }
     
-    const result = await generateMissingDeliverables(
-      currentProject.id,
-      findings,
-      extractedData,
-      submissionId || undefined
-    );
+    try {
+      const result = await generateMissingDeliverables(
+        currentProject.id,
+        findings,
+        extractedData,
+        submissionId || undefined
+      );
 
-    if (result && submissionId) {
-      // Refresh deliverables
-      const updated = await fetchDeliverables(submissionId);
-      setDeliverables(updated);
+      // Use submission id returned from result, or fallback to current
+      const finalSubId = (result as any)?.submissionId || submissionId;
+      if (finalSubId) {
+        setSubmissionId(finalSubId);
+        // Refresh deliverables
+        const updated = await fetchDeliverables(finalSubId);
+        setDeliverables(updated);
+      }
+    } catch (err) {
+      console.error('handleGenerateMissing error', err);
     }
   }, [currentProject, findings, extractedData, submissionId, generateMissingDeliverables, fetchDeliverables]);
 
