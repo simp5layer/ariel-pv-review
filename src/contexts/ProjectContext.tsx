@@ -204,9 +204,19 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }));
         setFindings(mappedFindings);
         
-        // Create submission
+        // Create submission - use AI's compliance percentage if available
+        // Otherwise calculate: issues count vs total checks
         const passCount = mappedFindings.filter(f => f.severity === 'pass').length;
-        const compliancePercentage = data.compliancePercentage || Math.round((passCount / mappedFindings.length) * 100);
+        const issueCount = mappedFindings.filter(f => f.severity !== 'pass').length;
+        const totalChecks = mappedFindings.length;
+        
+        // Compliance % = percentage of checks that passed (not issues)
+        const calculatedCompliance = totalChecks > 0 
+          ? Math.round((passCount / totalChecks) * 100) 
+          : 100;
+        
+        // Prefer AI-provided percentage, fallback to calculated
+        const compliancePercentage = data.compliancePercentage ?? calculatedCompliance;
         
         const newSubmission: Submission = {
           id: `SUB-${Date.now()}`,
@@ -219,27 +229,16 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         };
         addSubmission(newSubmission);
       } else {
-        // Fallback to mock if no findings returned
-        setFindings(mockFindings);
+        // No findings returned - set empty state, don't use mock data
+        setFindings([]);
+        console.warn('No compliance findings returned from AI analysis');
       }
     } catch (err) {
       console.error('Compliance review error:', err);
-      // Fallback to mock data on error
-      setFindings(mockFindings);
-      
-      const passCount = mockFindings.filter(f => f.severity === 'pass').length;
-      const compliancePercentage = Math.round((passCount / mockFindings.length) * 100);
-      
-      const newSubmission: Submission = {
-        id: `SUB-${Date.now()}`,
-        submittedBy: 'Engineer User',
-        submittedAt: new Date(),
-        completedAt: new Date(),
-        status: compliancePercentage >= 80 ? 'passed' : 'failed',
-        compliancePercentage,
-        findings: mockFindings
-      };
-      addSubmission(newSubmission);
+      // Don't use mock data - show error state instead
+      setFindings([]);
+      // Throw error so UI can handle it
+      throw new Error('Compliance analysis failed. Please try again.');
     } finally {
       setIsReviewing(false);
     }

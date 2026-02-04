@@ -136,9 +136,13 @@ const DesignReview: React.FC = () => {
   const minorCount = findings.filter(f => f.severity === 'minor').length;
   const passCount = findings.filter(f => f.severity === 'pass').length;
   const totalFindings = findings.length;
+  
+  // Compliance is calculated as: passed checks / total checks
+  // Non-pass findings are issues that need fixing, pass findings are compliant checks
+  const issueCount = criticalCount + majorCount + minorCount;
   const compliancePercentage = totalFindings > 0 
     ? Math.round((passCount / totalFindings) * 100) 
-    : 0;
+    : 100; // 100% if no findings (nothing to check)
 
   const latestSubmission = submissions[submissions.length - 1];
 
