@@ -4,6 +4,18 @@ export type SeverityLevel = 'critical' | 'major' | 'minor' | 'pass';
 
 export type ActionType = 'corrective' | 'recommendation';
 
+export type DeliverableType = 
+  | 'ai_prompt_log'
+  | 'design_review_report'
+  | 'issue_register'
+  | 'compliance_checklist'
+  | 'recalculation_sheet'
+  | 'redline_notes'
+  | 'bom_boq'
+  | 'risk_reflection';
+
+export type DeliverableStatus = 'not_generated' | 'generated' | 'updated';
+
 export interface UploadedFile {
   id: string;
   name: string;
@@ -11,6 +23,7 @@ export interface UploadedFile {
   size: number;
   uploadedAt: Date;
   status: 'pending' | 'processing' | 'completed' | 'error';
+  sourceReference?: string; // page number or cell reference
 }
 
 export interface Project {
@@ -20,9 +33,17 @@ export interface Project {
   systemType: SystemType;
   createdAt: Date;
   updatedAt: Date;
-  status: 'setup' | 'analyzing' | 'standards' | 'reviewing' | 'completed';
+  status: 'draft' | 'setup' | 'analyzing' | 'standards' | 'reviewing' | 'completed';
   files: UploadedFile[];
   standardFiles: UploadedFile[];
+  useProjectSpecificStandards?: boolean;
+}
+
+export interface ExtractedParameter {
+  value: string | number;
+  sourceFile: string;
+  sourceReference: string; // page number or Excel cell
+  unit?: string;
 }
 
 export interface ExtractedData {
@@ -39,6 +60,33 @@ export interface ExtractedData {
     maxVoltage: number;
     totalCapacity: number;
   };
+  // Enhanced extraction with source traceability
+  moduleParameters?: {
+    voc: ExtractedParameter;
+    vmp: ExtractedParameter;
+    isc: ExtractedParameter;
+    imp: ExtractedParameter;
+    pmax: ExtractedParameter;
+    tempCoeffVoc?: ExtractedParameter;
+    tempCoeffPmax?: ExtractedParameter;
+  };
+  inverterParameters?: {
+    maxDcVoltage: ExtractedParameter;
+    mpptRangeLow: ExtractedParameter;
+    mpptRangeHigh: ExtractedParameter;
+    maxInputCurrent: ExtractedParameter;
+    maxStringsPerMppt: ExtractedParameter;
+  };
+}
+
+export interface CalculationResult {
+  formula: string;
+  inputs: { name: string; value: number | string; source: string }[];
+  result: number | string;
+  unit?: string;
+  passFailStatus: 'pass' | 'fail' | 'warning' | 'insufficient_data';
+  limit?: number | string;
+  limitSource?: string;
 }
 
 export interface ComplianceFinding {
@@ -51,6 +99,37 @@ export interface ComplianceFinding {
   actionType: ActionType;
   severity: SeverityLevel;
   action: string;
+  // Enhanced fields for Futurethon compliance
+  evidencePointer?: string; // file name + page/cell reference
+  verificationMethod?: string;
+  violatedRequirement?: string;
+  riskExplanation?: string;
+  impactIfUnresolved?: string;
+  calculationResult?: CalculationResult;
+}
+
+export interface AIPromptLog {
+  id: string;
+  timestamp: Date;
+  promptType: 'extraction' | 'calculation' | 'compliance' | 'optimization';
+  prompt: string;
+  response: string;
+  model: string;
+  tokensUsed?: number;
+  validationStatus?: 'validated' | 'corrected' | 'rejected';
+  correctionNotes?: string;
+}
+
+export interface Deliverable {
+  id: string;
+  type: DeliverableType;
+  name: string;
+  status: DeliverableStatus;
+  generatedAt?: Date;
+  updatedAt?: Date;
+  submissionNumber?: number;
+  content?: string;
+  downloadUrl?: string;
 }
 
 export interface Submission {
@@ -61,6 +140,19 @@ export interface Submission {
   status: 'pending' | 'passed' | 'failed';
   compliancePercentage: number;
   findings: ComplianceFinding[];
+  deliverables?: Deliverable[];
+  aiPromptLogs?: AIPromptLog[];
+}
+
+export interface StandardDocument {
+  id: string;
+  name: string;
+  version?: string;
+  category: 'IEC' | 'SEC' | 'SBC' | 'SASO' | 'MOMRA' | 'SERA' | 'WERA' | 'NEC' | 'OTHER';
+  uploadedAt: Date;
+  file: UploadedFile;
+  isGlobal: boolean; // true = global library, false = project-specific
+  projectId?: string; // only for project-specific standards
 }
 
 export interface ProjectReview {
@@ -68,3 +160,47 @@ export interface ProjectReview {
   submissions: Submission[];
   currentCompliancePercentage: number;
 }
+
+// Deliverable metadata for UI display
+export const DELIVERABLE_METADATA: Record<DeliverableType, { name: string; description: string; icon: string }> = {
+  ai_prompt_log: {
+    name: 'AI Prompt Log',
+    description: 'Full prompt/output traceability for all AI interactions',
+    icon: '🤖'
+  },
+  design_review_report: {
+    name: 'Design Review Report',
+    description: 'Comprehensive review with executive summary',
+    icon: '📋'
+  },
+  issue_register: {
+    name: 'Issue Register (NCR)',
+    description: 'Non-conformity log with P0/P1/P2 severity',
+    icon: '⚠️'
+  },
+  compliance_checklist: {
+    name: 'Standards Compliance Checklist',
+    description: 'IEC/SBC/SEC/SASO/SERA/MOMRA verification',
+    icon: '✅'
+  },
+  recalculation_sheet: {
+    name: 'Recalculation Sheet',
+    description: 'Explicit formulas and results verification',
+    icon: '🔢'
+  },
+  redline_notes: {
+    name: 'Redline Notes',
+    description: 'Written redline list for PDF drawings',
+    icon: '📝'
+  },
+  bom_boq: {
+    name: 'Optimized BoM & BoQ',
+    description: 'Bill of Materials/Quantities with justification',
+    icon: '📦'
+  },
+  risk_reflection: {
+    name: 'Risk Reflection',
+    description: 'AI reliability and limitations assessment',
+    icon: '⚖️'
+  }
+};

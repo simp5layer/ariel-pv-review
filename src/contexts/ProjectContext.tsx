@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
-import { Project, UploadedFile, ExtractedData, ComplianceFinding, Submission, SeverityLevel } from '@/types/project';
+import { Project, UploadedFile, ExtractedData, ComplianceFinding, Submission, Deliverable, DeliverableType, StandardDocument } from '@/types/project';
 
-type ViewMode = 'landing' | 'workflow' | 'history';
+type ViewMode = 'landing' | 'workflow' | 'history' | 'standards';
 
 interface ProjectContextType {
   currentProject: Project | null;

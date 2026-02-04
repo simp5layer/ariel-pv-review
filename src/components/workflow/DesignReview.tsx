@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useProject } from '@/contexts/ProjectContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -14,6 +14,8 @@ import {
 } from '@/components/ui/table';
 import SeverityBadge from '@/components/ui/SeverityBadge';
 import StatCard from '@/components/ui/StatCard';
+import DeliverablesPanel from './DeliverablesPanel';
+import { Deliverable, DeliverableType, DELIVERABLE_METADATA } from '@/types/project';
 import {
   ClipboardCheck,
   ArrowLeft,
@@ -26,9 +28,24 @@ import {
   User,
   TrendingUp,
   Lightbulb,
-  FileCheck
+  FileCheck,
+  Package,
+  FileText,
+  Calculator
 } from 'lucide-react';
 import { format } from 'date-fns';
+
+// Mock deliverables for demo
+const createMockDeliverables = (submissionNumber: number): Deliverable[] => [
+  { id: '1', type: 'ai_prompt_log', name: 'AI Prompt Log', status: 'generated', generatedAt: new Date(), submissionNumber },
+  { id: '2', type: 'design_review_report', name: 'Design Review Report', status: 'generated', generatedAt: new Date(), submissionNumber },
+  { id: '3', type: 'issue_register', name: 'Issue Register', status: 'generated', generatedAt: new Date(), submissionNumber },
+  { id: '4', type: 'compliance_checklist', name: 'Compliance Checklist', status: 'generated', generatedAt: new Date(), submissionNumber },
+  { id: '5', type: 'recalculation_sheet', name: 'Recalculation Sheet', status: 'not_generated' },
+  { id: '6', type: 'redline_notes', name: 'Redline Notes', status: 'not_generated' },
+  { id: '7', type: 'bom_boq', name: 'BoM & BoQ', status: 'not_generated' },
+  { id: '8', type: 'risk_reflection', name: 'Risk Reflection', status: 'not_generated' },
+];
 
 const DesignReview: React.FC = () => {
   const {
@@ -39,8 +56,46 @@ const DesignReview: React.FC = () => {
     setIsReviewing
   } = useProject();
 
+  const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
+  const [isGeneratingDeliverables, setIsGeneratingDeliverables] = useState(false);
+
   const handleRunReview = () => {
     setIsReviewing(true);
+    // Deliverables will be partially generated after review completes
+    setTimeout(() => {
+      setDeliverables(createMockDeliverables(submissions.length + 1));
+    }, 4500);
+  };
+
+  const handleGenerateMissing = () => {
+    setIsGeneratingDeliverables(true);
+    setTimeout(() => {
+      setDeliverables(prev => prev.map(d => ({
+        ...d,
+        status: 'generated',
+        generatedAt: d.generatedAt || new Date(),
+        submissionNumber: submissions.length
+      })));
+      setIsGeneratingDeliverables(false);
+    }, 2000);
+  };
+
+  const handleRegenerateAll = () => {
+    setIsGeneratingDeliverables(true);
+    setTimeout(() => {
+      setDeliverables(prev => prev.map(d => ({
+        ...d,
+        status: 'updated',
+        updatedAt: new Date(),
+        submissionNumber: submissions.length
+      })));
+      setIsGeneratingDeliverables(false);
+    }, 3000);
+  };
+
+  const handleExportPackage = () => {
+    // Mock export - in real implementation, this would generate a ZIP/bundle
+    alert('Exporting deliverables package...\n\nIn production, this would download a ZIP containing all 8 deliverables.');
   };
 
   const criticalCount = findings.filter(f => f.severity === 'critical').length;
@@ -105,23 +160,26 @@ const DesignReview: React.FC = () => {
           </Card>
         )}
 
-        {/* Results Dashboard */}
+        {/* Results Dashboard with Deliverables Sidebar */}
         {findings.length > 0 && (
-          <Tabs defaultValue="findings" className="space-y-6">
-            <TabsList>
-              <TabsTrigger value="findings" className="gap-2">
-                <ClipboardCheck className="w-4 h-4" />
-                Compliance Findings
-              </TabsTrigger>
-              <TabsTrigger value="timeline" className="gap-2">
-                <Clock className="w-4 h-4" />
-                Submission Timeline
-              </TabsTrigger>
-              <TabsTrigger value="advantages" className="gap-2">
-                <Lightbulb className="w-4 h-4" />
-                Advantages
-              </TabsTrigger>
-            </TabsList>
+          <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
+            {/* Main Content */}
+            <div className="space-y-6">
+              <Tabs defaultValue="findings" className="space-y-6">
+                <TabsList>
+                  <TabsTrigger value="findings" className="gap-2">
+                    <ClipboardCheck className="w-4 h-4" />
+                    Compliance Findings
+                  </TabsTrigger>
+                  <TabsTrigger value="timeline" className="gap-2">
+                    <Clock className="w-4 h-4" />
+                    Submission Timeline
+                  </TabsTrigger>
+                  <TabsTrigger value="advantages" className="gap-2">
+                    <Lightbulb className="w-4 h-4" />
+                    Advantages
+                  </TabsTrigger>
+                </TabsList>
 
             <TabsContent value="findings" className="space-y-6">
               {/* Compliance Stats */}
@@ -348,7 +406,21 @@ const DesignReview: React.FC = () => {
                 </CardContent>
               </Card>
             </TabsContent>
-          </Tabs>
+              </Tabs>
+            </div>
+
+            {/* Deliverables Sidebar */}
+            <div className="lg:sticky lg:top-8 lg:self-start">
+              <DeliverablesPanel
+                deliverables={deliverables}
+                onGenerateMissing={handleGenerateMissing}
+                onRegenerateAll={handleRegenerateAll}
+                onExportPackage={handleExportPackage}
+                isGenerating={isGeneratingDeliverables}
+                submissionNumber={submissions.length}
+              />
+            </div>
+          </div>
         )}
 
         {/* Action Buttons */}

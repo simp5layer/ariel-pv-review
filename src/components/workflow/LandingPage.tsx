@@ -1,33 +1,39 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { FolderPlus, History, Zap } from 'lucide-react';
-import arialLogo from '@/assets/arial-logo.png';
+import { FolderPlus, History, Zap, Book, Shield, Scale, Globe } from 'lucide-react';
+
 interface LandingPageProps {
   onCreateNew: () => void;
   onViewHistory: () => void;
+  onOpenStandardsLibrary: () => void;
   hasProjects: boolean;
 }
+
 const LandingPage: React.FC<LandingPageProps> = ({
   onCreateNew,
   onViewHistory,
+  onOpenStandardsLibrary,
   hasProjects
 }) => {
-  return <div className="min-h-full bg-background engineering-grid flex items-center justify-center py-12">
-      <div className="max-w-3xl mx-auto px-6 space-y-8">
+  return (
+    <div className="min-h-full bg-background engineering-grid flex items-center justify-center py-12">
+      <div className="max-w-4xl mx-auto px-6 space-y-8">
         {/* Welcome Section */}
         <div className="text-center space-y-4">
-          
           <h1 className="text-4xl font-bold text-foreground">Welcome to ARIAL</h1>
           <p className="text-lg text-muted-foreground max-w-xl mx-auto">
             AI-powered PV design review and compliance verification platform for Saudi Arabia projects
           </p>
         </div>
 
-        {/* Action Cards */}
+        {/* Primary Action Cards */}
         <div className="grid gap-6 md:grid-cols-2">
           {/* Create New Project Card */}
-          <Card className="group cursor-pointer transition-all hover:shadow-lg hover:border-primary/50 animate-slide-up" onClick={onCreateNew}>
+          <Card 
+            className="group cursor-pointer transition-all hover:shadow-lg hover:border-primary/50 animate-slide-up" 
+            onClick={onCreateNew}
+          >
             <CardHeader className="text-center pb-2">
               <div className="mx-auto w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mb-3 group-hover:bg-primary/20 transition-colors">
                 <FolderPlus className="w-8 h-8 text-primary" />
@@ -46,16 +52,20 @@ const LandingPage: React.FC<LandingPageProps> = ({
           </Card>
 
           {/* View History Card */}
-          <Card className={`group cursor-pointer transition-all hover:shadow-lg animate-slide-up ${hasProjects ? 'hover:border-primary/50' : 'opacity-60'}`} style={{
-          animationDelay: '100ms'
-        }} onClick={hasProjects ? onViewHistory : undefined}>
+          <Card 
+            className={`group cursor-pointer transition-all hover:shadow-lg animate-slide-up ${hasProjects ? 'hover:border-primary/50' : 'opacity-60'}`} 
+            style={{ animationDelay: '100ms' }} 
+            onClick={hasProjects ? onViewHistory : undefined}
+          >
             <CardHeader className="text-center pb-2">
               <div className="mx-auto w-16 h-16 rounded-2xl bg-secondary/50 flex items-center justify-center mb-3 group-hover:bg-secondary transition-colors">
                 <History className="w-8 h-8 text-muted-foreground" />
               </div>
               <CardTitle className="text-xl">Project History</CardTitle>
               <CardDescription>
-                {hasProjects ? 'View and manage your previous design review projects' : 'No previous projects yet. Create your first project to get started.'}
+                {hasProjects 
+                  ? 'View and manage your previous design review projects' 
+                  : 'No previous projects yet. Create your first project to get started.'}
               </CardDescription>
             </CardHeader>
             <CardContent className="pt-0">
@@ -67,6 +77,41 @@ const LandingPage: React.FC<LandingPageProps> = ({
           </Card>
         </div>
 
+        {/* Standards Library Card - Full Width */}
+        <Card 
+          className="group cursor-pointer transition-all hover:shadow-lg hover:border-primary/50 animate-slide-up" 
+          style={{ animationDelay: '200ms' }}
+          onClick={onOpenStandardsLibrary}
+        >
+          <CardContent className="p-6">
+            <div className="flex items-center gap-6">
+              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-primary/20 to-secondary/20 flex items-center justify-center group-hover:from-primary/30 group-hover:to-secondary/30 transition-colors">
+                <Book className="w-10 h-10 text-primary" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-xl font-semibold text-foreground mb-1">Standards Library</h3>
+                <p className="text-muted-foreground mb-3">
+                  Upload and manage IEC, SEC, SBC, SASO, MOMRA, SERA, and WERA standards used for all projects
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {['IEC', 'SEC', 'SBC', 'SASO', 'MOMRA', 'SERA'].map((std) => (
+                    <span 
+                      key={std} 
+                      className="px-2 py-1 bg-muted rounded-md text-xs font-mono text-muted-foreground"
+                    >
+                      {std}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <Button variant="outline" size="lg" className="gap-2">
+                <Shield className="w-4 h-4" />
+                Manage Standards
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Features List */}
         <div className="text-center pt-6">
           <p className="text-sm text-muted-foreground">
@@ -74,6 +119,8 @@ const LandingPage: React.FC<LandingPageProps> = ({
           </p>
         </div>
       </div>
-    </div>;
+    </div>
+  );
 };
+
 export default LandingPage;
