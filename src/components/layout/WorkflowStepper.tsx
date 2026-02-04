@@ -1,13 +1,12 @@
 import React from 'react';
-import { Check, FolderPlus, Search, FileText, ClipboardCheck } from 'lucide-react';
+import { Check, FolderPlus, Search, ClipboardCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useProject } from '@/contexts/ProjectContext';
 
 const steps = [
   { id: 0, label: 'Project Setup', icon: FolderPlus },
   { id: 1, label: 'Analyze & Extract', icon: Search },
-  { id: 2, label: 'Standards Upload', icon: FileText },
-  { id: 3, label: 'Design Review', icon: ClipboardCheck },
+  { id: 2, label: 'Design Review', icon: ClipboardCheck },
 ];
 
 const WorkflowStepper: React.FC = () => {

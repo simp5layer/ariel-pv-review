@@ -460,11 +460,11 @@ const DesignReview: React.FC = () => {
         <div className="flex justify-between pt-4">
           <Button
             variant="outline"
-            onClick={() => setCurrentStep(2)}
+            onClick={() => setCurrentStep(1)}
             className="gap-2"
           >
             <ArrowLeft className="w-4 h-4" />
-            Back to Standards
+            Back to Analyze
           </Button>
 
           {findings.length > 0 && (

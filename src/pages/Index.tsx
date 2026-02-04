@@ -5,7 +5,6 @@ import LandingPage from '@/components/workflow/LandingPage';
 import ProjectHistory from '@/components/workflow/ProjectHistory';
 import ProjectSetup from '@/components/workflow/ProjectSetup';
 import AnalyzeExtract from '@/components/workflow/AnalyzeExtract';
-import StandardsUpload from '@/components/workflow/StandardsUpload';
 import DesignReview from '@/components/workflow/DesignReview';
 import StandardsLibrary from '@/components/workflow/StandardsLibrary';
 
@@ -17,15 +16,13 @@ const WorkflowContent: React.FC = () => {
     return <ProjectSetup />;
   }
 
-  // Render step based on current step
+  // Render step based on current step (3-step workflow: Setup -> Analyze -> Review)
   switch (currentStep) {
     case 0:
       return <ProjectSetup />;
     case 1:
       return <AnalyzeExtract />;
     case 2:
-      return <StandardsUpload />;
-    case 3:
       return <DesignReview />;
     default:
       return <ProjectSetup />;
@@ -38,7 +35,9 @@ const AppContent: React.FC = () => {
     setViewMode, 
     projectHistory, 
     startNewProject, 
-    openProjectFromHistory 
+    openProjectFromHistory,
+    deleteProjectFromHistory,
+    updateProjectInHistory
   } = useProject();
 
   // Landing page view
@@ -63,6 +62,8 @@ const AppContent: React.FC = () => {
           projects={projectHistory}
           onBack={() => setViewMode('landing')}
           onSelectProject={openProjectFromHistory}
+          onDeleteProject={deleteProjectFromHistory}
+          onUpdateProject={updateProjectInHistory}
         />
       </MainLayout>
     );
