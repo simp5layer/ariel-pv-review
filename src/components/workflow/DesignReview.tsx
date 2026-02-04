@@ -19,6 +19,7 @@ import DeliverablesViewer from './DeliverablesViewer';
 import TraceabilityPanel from './TraceabilityPanel';
 import { Deliverable, DeliverableType, DELIVERABLE_METADATA } from '@/types/project';
 import { useDeliverables } from '@/hooks/useDeliverables';
+import { useExportPackage } from '@/hooks/useExportPackage';
 import {
   ClipboardCheck,
   ArrowLeft,
@@ -62,6 +63,7 @@ const DesignReview: React.FC = () => {
   } = useProject();
 
   const { generateMissingDeliverables, fetchDeliverables, isGenerating, progress: genProgress } = useDeliverables();
+  const { downloadPackage, getExportStatus, isExporting } = useExportPackage();
   const [deliverables, setDeliverables] = useState<Deliverable[]>([]);
   const [submissionId, setSubmissionId] = useState<string | null>(null);
 
@@ -196,8 +198,10 @@ const DesignReview: React.FC = () => {
   }, []);
 
   const handleExportPackage = useCallback(() => {
-    toast.info('Export package will be available soon.');
-  }, []);
+    downloadPackage(displayDeliverables, currentProject?.name || 'Project');
+  }, [downloadPackage, displayDeliverables, currentProject?.name]);
+
+  const exportStatus = useMemo(() => getExportStatus(displayDeliverables), [getExportStatus, displayDeliverables]);
 
   const criticalCount = findings.filter(f => f.severity === 'critical').length;
   const majorCount = findings.filter(f => f.severity === 'major').length;
@@ -678,7 +682,9 @@ const DesignReview: React.FC = () => {
                 onRegenerateAll={handleRegenerateAll}
                 onExportPackage={handleExportPackage}
                 isGenerating={isGenerating}
+                isExporting={isExporting}
                 submissionNumber={submissions.length}
+                exportStatus={exportStatus}
               />
             </div>
           </div>
