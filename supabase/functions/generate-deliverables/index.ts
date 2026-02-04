@@ -208,10 +208,26 @@ Deno.serve(async (req) => {
       return json({ error: "Missing projectId" }, 400);
     }
 
-    // Get or create submission
-    let actualSubmissionId: string = submissionId || "";
+    // Get or create submission - ALWAYS validate submission exists in DB
+    let actualSubmissionId: string = "";
+    
+    if (submissionId) {
+      // Verify submission exists
+      const { data: existingSub, error: subCheckError } = await supabase
+        .from("submissions")
+        .select("id")
+        .eq("id", submissionId)
+        .maybeSingle();
+      
+      if (existingSub) {
+        actualSubmissionId = existingSub.id;
+      } else {
+        console.log("Provided submissionId not found in DB, will create new:", submissionId);
+      }
+    }
+    
+    // If no valid submission, create one
     if (!actualSubmissionId) {
-      // Create a new submission
       const { data: newSubmission, error: subError } = await supabase
         .from("submissions")
         .insert({
@@ -224,6 +240,7 @@ Deno.serve(async (req) => {
         .single();
 
       if (subError) {
+        console.error("Failed to create submission:", subError);
         return json({ error: "Failed to create submission" }, 500);
       }
       actualSubmissionId = newSubmission.id;
